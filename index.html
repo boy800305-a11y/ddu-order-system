@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DDU 客訂叫貨系統</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Noto Sans TC", sans-serif;
+      background: #f5f6f8;
+      color: #111;
+    }
+
+    header {
+      background: #111;
+      color: white;
+      padding: 20px;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 24px;
+    }
+
+    header p {
+      margin: 6px 0 0;
+      color: #aaa;
+      font-size: 14px;
+    }
+
+    .container {
+      max-width: 600px;
+      margin: auto;
+      padding: 16px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 16px;
+      padding: 18px;
+      margin-bottom: 14px;
+      box-shadow: 0 2px 10px rgba(0,0,0,.05);
+    }
+
+    .card h2 {
+      margin: 0 0 8px;
+      font-size: 19px;
+    }
+
+    .card p {
+      margin: 0;
+      color: #666;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    button {
+      width: 100%;
+      border: 0;
+      border-radius: 12px;
+      padding: 15px;
+      margin-top: 14px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .primary {
+      background: #111;
+      color: white;
+    }
+
+    .secondary {
+      background: #eeeeee;
+      color: #111;
+    }
+
+    .status {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+
+    .tag {
+      background: #f0f0f0;
+      padding: 7px 10px;
+      border-radius: 20px;
+      font-size: 13px;
+    }
+
+    .bottom {
+      text-align: center;
+      color: #999;
+      font-size: 12px;
+      padding: 15px;
+    }
+  </style>
+</head>
+
+<body>
+
+<header>
+  <h1>DDU 客訂叫貨系統</h1>
+  <p>客訂辨識・廠商分類・自動統計</p>
+</header>
+
+<div class="container">
+
+  <div class="card">
+    <h2>📷 新增客訂</h2>
+    <p>
+      上傳客訂截圖，系統將辨識商品、顏色、尺寸及廠商。
+    </p>
+
+    <button class="primary" onclick="newOrder()">
+      ＋ 新增客訂
+    </button>
+  </div>
+
+  <div class="card">
+    <h2>📋 今日客訂</h2>
+    <p>查看今天尚未處理的客訂商品。</p>
+
+    <div class="status">
+      <span class="tag">待叫貨 0</span>
+      <span class="tag">已叫貨 0</span>
+      <span class="tag">缺貨 0</span>
+    </div>
+
+    <button class="secondary">
+      查看今日客訂
+    </button>
+  </div>
+
+  <div class="card">
+    <h2>🏭 廠商叫貨</h2>
+    <p>
+      系統依照廠商自動整理商品、顏色、尺寸與數量。
+    </p>
+
+    <button class="secondary">
+      產生叫貨清單
+    </button>
+  </div>
+
+  <div class="card">
+    <h2>🔎 商品搜尋</h2>
+    <p>
+      搜尋 SHOPLINE 商品編號、商品名稱或款式。
+    </p>
+
+    <button class="secondary">
+      搜尋商品
+    </button>
+  </div>
+
+  <div class="card">
+    <h2>📦 訂單狀態</h2>
+
+    <div class="status">
+      <span class="tag">待叫貨</span>
+      <span class="tag">已叫貨</span>
+      <span class="tag">到貨</span>
+      <span class="tag">缺貨</span>
+      <span class="tag">已通知</span>
+      <span class="tag">已取貨</span>
+    </div>
+  </div>
+
+  <div class="bottom">
+    DDU Order System v1.0
+  </div>
+
+</div>
+
+<script>
+function newOrder() {
+  alert("下一步將加入 AI 客訂圖片辨識功能");
+}
+</script>
+
+</body>
+</html>
