@@ -586,6 +586,7 @@ async function loadTodayOrders() {
   orderEl('todayPanel').hidden=false;
   if(loadingToday) return; loadingToday=true; orderEl('todayButton').disabled=true;
   const revision=staffRevision;
+  resetTodayStockCache();
   const output=orderEl('todayOrders'); output.replaceChildren(); orderEl('todayMessage').textContent='正在讀取今日客訂…';
   try {
     const client=getOrderClient(),session=await client.auth.getSession(); if(session.error) throw session.error;
@@ -605,6 +606,7 @@ async function loadTodayOrders() {
       addText(row,'p',(orderStatuses[order.status]||order.status)+' · '+new Date(order.created_at).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour:'2-digit',minute:'2-digit'}));
       (order.items||[]).forEach(item=>addText(row,'p',(item.product_name||item.product_code)+' / '+(item.variant_name||'規格')+' × '+item.qty+(item.ordered_qty?'（已叫貨 '+item.ordered_qty+' 件／已到貨 '+(item.received_qty||0)+' 件）':'')));
       if(order.note) addText(row,'p','備註：'+order.note); fulfillmentDates(row,order); appendAmendActions(row,order);
+      appendTodayProductStock(row,order.items||[]);
     });
     orderEl('todayMessage').textContent=data.length?'今日 '+data.length+' 張客訂'+(data.length>100?'，顯示最新 100 張。':'。'):'今天尚無客訂。';
     ['pending','ordered','shortage'].forEach(status=>{
@@ -990,7 +992,7 @@ orderEl('discardOrderDraft').addEventListener('click',()=>{if(savingOrder||confi
 renderOrderCart(); updateStaffUI();
 </script>
 <script src="xlsx.full.min.js"></script>
-<script src="inventory.js?v=20261004-baseline"></script>
-<script src="store-ui.js?v=20261004-baseline"></script>
+<script src="inventory.js?v=20261004-stock-options"></script>
+<script src="store-ui.js?v=20261004-stock-options"></script>
 </body>
 </html>

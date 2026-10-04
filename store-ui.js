@@ -114,6 +114,7 @@ async function loadNegativeInventoryOrders(){
   groups.forEach(item=>{
    const row=addText(output,'article','','order-line');addText(row,'h3',item.name+' / '+item.style);
    addText(row,'p','待核對 '+item.qty+' 件｜'+item.stores.map(store=>store+'：−1').join('、'));
+   appendTodayProductStock(row,[item]);
   });
   if(groups.length){
    const label=addText(output,'label','待處理商品清單（可選取複製）');label.htmlFor='negativeOrderText';
@@ -122,4 +123,62 @@ async function loadNegativeInventoryOrders(){
   }
   message.textContent=(groups.length?groups.length+' 種規格，共 '+groups.reduce((sum,item)=>sum+item.qty,0)+' 件新客訂待核對。':'今日尚無新客訂；起算前已是 −1 的舊客訂已排除。')+' 報表更新：'+new Date(report.completed_at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'})+'｜'+report.file_name;
  }catch{if(revision!==staffRevision)return;output.replaceChildren();message.textContent='無法讀取庫存 −1 清單，請確認店員權限及連線後重試。';}
+}
+
+let todayStockCatalog=null;
+const todayStockProducts=new Map();
+function resetTodayStockCache(){todayStockCatalog=null;todayStockProducts.clear();}
+async function getTodayStockCatalog(){
+ if(!todayStockCatalog){
+  const client=getOrderClient();
+  todayStockCatalog=Promise.all([
+   readFullCatalog(client,'products','id,shopline_product_id,product_name'),
+   readFullCatalog(client,'variants','id,shopline_variant_id,shopline_product_id,variant_name,color,size')
+  ]).then(([products,variants])=>({products:new Map(products.map(p=>[p.shopline_product_id,p])),variants,byVariant:new Map(variants.map(v=>[v.shopline_variant_id,v]))}));
+ }
+ return todayStockCatalog;
+}
+async function getTodayProductStock(productId,catalog){
+ if(!todayStockProducts.has(productId)){
+  todayStockProducts.set(productId,(async()=>{
+   const variants=catalog.variants.filter(v=>v.shopline_product_id===productId),stock=new Map(),client=getOrderClient();
+   const ids=variants.map(v=>v.shopline_variant_id).filter(Boolean);
+   for(let i=0;i<ids.length;i+=100){
+    const result=await client.from('ddu_store_inventory').select('variant_id,store_code,quantity,imported_at').in('variant_id',ids.slice(i,i+100));
+    if(result.error)throw result.error;
+    for(const entry of result.data){if(!stock.has(entry.variant_id))stock.set(entry.variant_id,{});stock.get(entry.variant_id)[entry.store_code]=entry;}
+   }
+   return {variants,stock};
+  })());
+ }
+ return todayStockProducts.get(productId);
+}
+async function appendTodayProductStock(parent,items){
+ if(!items.length)return;
+ const revision=staffRevision,section=addText(parent,'details');section.open=true;
+ addText(section,'summary','同商品全部顏色／尺寸庫存');
+ const content=addText(section,'div');content.style.overflowX='auto';
+ const status=addText(content,'p','正在讀取其他顏色／尺寸庫存…');
+ try{
+  const catalog=await getTodayStockCatalog();if(revision!==staffRevision)return;
+  const ids=new Set(items.map(i=>i.variant_id));
+  const products=[...new Set(items.map(i=>catalog.byVariant.get(i.variant_id)?.shopline_product_id).filter(Boolean))];
+  if(!products.length){status.textContent='找不到此商品的完整規格，請重新搜尋商品確認。';return;}
+  const data=await Promise.all(products.map(id=>getTodayProductStock(id,catalog)));if(revision!==staffRevision)return;
+  content.replaceChildren();
+  products.forEach((id,index)=>{
+   const {variants,stock}=data[index];
+   addText(content,'p',catalog.products.get(id)?.product_name||'商品');
+   const table=addText(content,'table');table.style.width='100%';table.style.fontSize='13px';table.style.borderCollapse='collapse';
+   const heading=addText(table,'tr');['顏色','尺寸','D1','D2','C','客訂規格'].forEach(label=>{const cell=addText(heading,'th',label);cell.scope='col';cell.style.padding='8px 4px';});
+   variants.forEach(v=>{
+    const row=addText(table,'tr'),entries=stock.get(v.shopline_variant_id)||{};
+    if(ids.has(v.shopline_variant_id))row.style.background='#fff4d6';
+    const values=[v.color||v.variant_name||'未填寫',v.size||'—',...['D1','D2','C'].map(s=>entries[s]?String(entries[s].quantity):'未更新'),ids.has(v.shopline_variant_id)?'本次客訂':''];
+    values.forEach(value=>{const cell=addText(row,'td',value);cell.style.padding='8px 4px';cell.style.borderBottom='1px solid #ddd';});
+   });
+   const dates=[...stock.values()].flatMap(s=>Object.values(s).map(e=>e.imported_at)).filter(Boolean).sort();
+   addText(content,'p',dates.length?'庫存報表更新：'+new Date(dates.at(-1)).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}):'尚無庫存報表；未更新不代表 0 件。');
+  });
+ }catch{if(revision!==staffRevision)return;status.textContent='其他規格庫存讀取失敗，請重新按「查看今日客訂」。';}
 }
