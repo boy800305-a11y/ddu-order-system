@@ -1,5 +1,5 @@
 // 商品照以商品編號對應；保留原始照片。
-const productPhotos={'2901':'2901.jpeg'};
+const productPhotos={'2901':'2901.jpeg','95900':'95900.jpeg'};
 function appendProductPhoto(parent,product,compact=false){
  const source=productPhotos[String(product?.product_code||'').trim()];
  if(!source)return null;
