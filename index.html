@@ -123,6 +123,11 @@
     #supplierPanel textarea { width:100%; margin-top:8px; padding:12px; border:1px solid #ddd; border-radius:10px; font:inherit; font-size:16px; }
     #supplierPanel label { display:block; margin-top:12px; font-size:14px; }
     #purchaseMessage, #supplierMessage { margin-top:12px; overflow-wrap:anywhere; }
+    .receipt-form { margin-top:14px; border-top:1px solid #ddd; padding-top:12px; }
+    .receipt-form label { display:block; margin-top:12px; font-size:14px; }
+    .receipt-form input[type="number"] { width:100%; margin:8px 0; padding:12px; border:1px solid #ddd; border-radius:10px; font:inherit; font-size:16px; }
+    .receipt-history { margin-top:12px; padding-top:12px; border-top:1px solid #ddd; }
+    #receiptMessage { margin-top:12px; overflow-wrap:anywhere; }
   </style>
 </head>
 
@@ -237,8 +242,10 @@
     <h2>📦 已叫貨未到貨</h2>
     <p>查看本人已記錄的廠商叫貨批次、日期及未到貨件數。</p>
     <label class="supplier-mode"><input type="checkbox" id="purchaseTestOnly"> 僅查看測試叫貨紀錄</label>
+    <label class="supplier-mode"><input type="checkbox" id="purchaseShowArrived"> 包含已全部到貨的叫貨紀錄</label>
     <button class="secondary" id="purchaseButton" type="button">查看已叫貨未到貨紀錄</button>
     <p id="purchaseMessage" role="status" aria-live="polite"></p>
+    <p id="receiptMessage" role="status" aria-live="polite"></p>
     <div id="purchaseRecords"></div>
   </section>
 
@@ -321,7 +328,7 @@ function renderProduct(product, variants) {
     if (variant.variant_sku) addText(item, 'div', '規格編號：' + variant.variant_sku);
     const choose = addText(item, 'button', '加入客訂 · ' + (variant.variant_name || '商品規格'), 'secondary');
     choose.type = 'button';
-    choose.addEventListener('click', () => { if (!savingOrder&&!confirmingPurchase) addOrderItem(product, variant); });
+    choose.addEventListener('click', () => { if (!savingOrder&&!confirmingPurchase&&!receivingPurchase) addOrderItem(product, variant); });
     list.appendChild(item);
   }
   article.appendChild(list);
@@ -453,8 +460,8 @@ orderEl('staffLoginForm').addEventListener('submit',async event=> {
   } catch(error) { orderMessage(error.message); } finally { button.disabled=false; }
 });
 orderEl('staffLogout').addEventListener('click',async()=> {
-  if(savingOrder||confirmingPurchase) return;
-  staffRevision++; clearSupplierList('已登出，叫貨清單已收起。'); clearPurchaseRecords();
+  if(savingOrder||confirmingPurchase||receivingPurchase) return;
+  staffRevision++; clearSupplierList('已登出，叫貨清單已收起。'); clearPurchaseRecords(); orderEl('receiptMessage').textContent='';
   try { const {error}=await getOrderClient().auth.signOut(); if(error) throw error;
     orderEl('todayOrders').replaceChildren(); orderEl('todayMessage').textContent='已登出，客訂資料已收起。';
     orderEl('orderCustomer').value=''; orderEl('orderNote').value=''; orderCart=[]; pendingOrderId=null; renderOrderCart();
@@ -462,7 +469,7 @@ orderEl('staffLogout').addEventListener('click',async()=> {
   } catch(error) { orderMessage('登出失敗，請稍後再試。'); }
 });
 async function saveCustomerOrder(event) {
-  event.preventDefault(); if(savingOrder||confirmingPurchase) return;
+  event.preventDefault(); if(savingOrder||confirmingPurchase||receivingPurchase) return;
   const customer=orderEl('orderCustomer').value.trim(), note=orderEl('orderNote').value.trim();
   if(!customer || !orderCart.length) { orderMessage('請填寫客訂代號，並至少加入一個商品規格。'); return; }
   if(orderCart.some(item=>!Number.isInteger(item.qty)||item.qty<1||item.qty>999)) { orderMessage('數量必須是 1 到 999 的整數。'); return; }
@@ -509,7 +516,7 @@ async function loadTodayOrders() {
       const row=addText(output,'article','','order-line');
       addText(row,'h3',(order.is_test?'【測試】':'')+order.customer_ref);
       addText(row,'p',(orderStatuses[order.status]||order.status)+' · '+new Date(order.created_at).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour:'2-digit',minute:'2-digit'}));
-      (order.items||[]).forEach(item=>addText(row,'p',(item.product_name||item.product_code)+' / '+(item.variant_name||'規格')+' × '+item.qty+(item.ordered_qty?'（已叫貨 '+item.ordered_qty+' 件）':'')));
+      (order.items||[]).forEach(item=>addText(row,'p',(item.product_name||item.product_code)+' / '+(item.variant_name||'規格')+' × '+item.qty+(item.ordered_qty?'（已叫貨 '+item.ordered_qty+' 件／已到貨 '+(item.received_qty||0)+' 件）':'')));
       if(order.note) addText(row,'p','備註：'+order.note);
     });
     orderEl('todayMessage').textContent=data.length?'今日 '+data.length+' 張客訂'+(data.length>100?'，顯示最新 100 張。':'。'):'今天尚無客訂。';
@@ -554,7 +561,7 @@ function clearSupplierList(message='客訂有變動，請重新產生叫貨清�
   orderEl('supplierGroups').replaceChildren(); orderEl('supplierMessage').textContent=message;
 }
 async function loadSupplierOrders() {
-  if(loadingSuppliers||confirmingPurchase) return;
+  if(loadingSuppliers||confirmingPurchase||receivingPurchase) return;
   const revision=staffRevision, testOnly=orderEl('supplierTestOnly').checked;
   loadingSuppliers=true; orderEl('supplierButton').disabled=true; orderEl('supplierTestOnly').disabled=true;
   orderEl('supplierPanel').hidden=false;
@@ -614,7 +621,7 @@ function setPurchaseBusy(busy) {
   document.querySelectorAll('.purchase-action').forEach(button=>{button.disabled=busy||!!button.closest('.purchase-review')&&!button.closest('.purchase-review').querySelector('input').checked;});
 }
 async function confirmSupplierBatch(group,testOnly,button) {
-  if(confirmingPurchase||savingOrder) return;
+  if(confirmingPurchase||savingOrder||receivingPurchase) return;
   const revision=staffRevision; setPurchaseBusy(true);
   orderEl('supplierMessage').textContent='正在記錄已叫貨，請勿重複提交…';
   try {
@@ -637,18 +644,18 @@ let loadingPurchases=false;
 function clearPurchaseRecords(message='已登出，叫貨紀錄已收起。') {
   orderEl('purchaseRecords').replaceChildren(); orderEl('purchaseMessage').textContent=message;
 }
-async function loadPurchaseRecords() {
-  if(loadingPurchases) return;
-  const revision=staffRevision,testOnly=orderEl('purchaseTestOnly').checked;
-  loadingPurchases=true; orderEl('purchaseButton').disabled=true; orderEl('purchaseTestOnly').disabled=true;
+async function loadPurchaseRecords(refreshAfterReceipt=false) {
+  if(loadingPurchases||(receivingPurchase&&!refreshAfterReceipt)) return;
+  const revision=staffRevision,testOnly=orderEl('purchaseTestOnly').checked,showArrived=orderEl('purchaseShowArrived').checked;
+  loadingPurchases=true; orderEl('purchaseButton').disabled=true; orderEl('purchaseTestOnly').disabled=true; orderEl('purchaseShowArrived').disabled=true;
   orderEl('purchasePanel').hidden=false; clearPurchaseRecords('正在讀取已叫貨未到貨紀錄…');
   try {
     const client=getOrderClient(),session=await client.auth.getSession(); if(session.error) throw session.error;
     if(!session.data.session) {clearPurchaseRecords('請先登入店員帳號。'); openOrderPanel(); return;}
     const records=[];
     for(let offset=0;;offset+=1000) {
-      const page=await client.from('ddu_purchase_batches').select('id,ordered_at,supplier_code,items,is_test,status')
-        .in('status',['ordered','partial']).eq('is_test',testOnly).order('ordered_at',{ascending:false}).order('id').range(offset,offset+999);
+      const page=await client.from('ddu_purchase_batches').select('id,ordered_at,supplier_code,items,is_test,status,last_received_at')
+        .in('status',showArrived?['ordered','partial','arrived']:['ordered','partial']).eq('is_test',testOnly).order('ordered_at',{ascending:false}).order('id').range(offset,offset+999);
       if(revision!==staffRevision) return;
       if(page.error) throw page.error; records.push(...page.data); if(page.data.length<1000) break;
     }
@@ -658,17 +665,110 @@ async function loadPurchaseRecords() {
       addText(row,'h3',(batch.is_test?'【測試】':'')+'廠商 '+batch.supplier_code);
       addText(row,'p','叫貨日期：'+new Date(batch.ordered_at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}));
       addText(row,'p','叫貨編號：'+batch.id);
+      addText(row,'p',batch.status==='arrived'?'已全部到貨':batch.status==='partial'?'部分到貨':'尚未到貨');
+      if(batch.last_received_at) addText(row,'p','最近到貨：'+new Date(batch.last_received_at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}));
       (batch.items||[]).forEach(item=>{
         const pending=Math.max(0,item.qty-(item.received_qty||0)); total+=pending;
         addText(row,'p',supplierItemText(item)+' ｜ 已到貨 '+(item.received_qty||0)+' 件／未到貨 '+pending+' 件');
       });
+      renderReceiptControls(row,batch);
     });
     orderEl('purchaseMessage').textContent=(testOnly?'【測試紀錄】':'正式紀錄：')+records.length+' 批叫貨，共 '+total+' 件未到貨。';
   } catch(error) {if(revision===staffRevision) clearPurchaseRecords('無法讀取叫貨紀錄，請確認權限及連線後再試。');}
-  finally {loadingPurchases=false; orderEl('purchaseButton').disabled=false; orderEl('purchaseTestOnly').disabled=false;}
+  finally {loadingPurchases=false; orderEl('purchaseButton').disabled=false; orderEl('purchaseTestOnly').disabled=receivingPurchase; orderEl('purchaseShowArrived').disabled=receivingPurchase;}
 }
-orderEl('purchaseButton').addEventListener('click',loadPurchaseRecords);
+orderEl('purchaseButton').addEventListener('click',()=>loadPurchaseRecords());
 orderEl('purchaseTestOnly').addEventListener('change',()=>clearPurchaseRecords('模式已變更，請重新查看紀錄。'));
+
+orderEl('purchaseShowArrived').addEventListener('change',()=>clearPurchaseRecords('顯示範圍已變更，請重新查看紀錄。'));
+
+let receivingPurchase=false;
+function receiptLines(inputs) {
+  const lines=[];
+  for(const {input,item} of inputs) {
+    const qty=Number(input.value);
+    if(!Number.isInteger(qty)||qty<0||qty>item.qty-(item.received_qty||0)) throw new Error('本次到貨請填 0 到未到貨件數的整數。');
+    if(qty) lines.push({variant_id:item.variant_id,qty,expected_received:item.received_qty||0});
+  }
+  if(!lines.length) throw new Error('請至少填一個規格的本次到貨件數。');
+  return lines;
+}
+function renderReceiptControls(row,batch) {
+  const historyButton=addText(row,'button','查看到貨歷程','secondary'); historyButton.type='button';
+  const history=addText(row,'div','','receipt-history'); history.hidden=true;
+  historyButton.addEventListener('click',()=>loadReceiptHistory(batch.id,history,historyButton));
+  if(batch.status==='arrived'||batch.items.every(item=>item.qty===(item.received_qty||0))) return;
+  const open=addText(row,'button',(batch.is_test?'登記測試到貨':'登記到貨'),'secondary'); open.type='button'; open.className+=' receipt-open';
+  const form=document.createElement('form'); form.className='receipt-form'; form.hidden=true; row.appendChild(form);
+  addText(form,'p','本次到貨填此次收到的件數；沒有到貨的規格維持 0。');
+  const inputs=[]; let receiptId=null;
+  batch.items.forEach((item,index)=>{
+    const pending=item.qty-(item.received_qty||0); if(!pending) return;
+    const name=(item.product_code||item.product_name||'商品')+' / '+(item.variant_name||'規格');
+    const label=addText(form,'label','本次到貨 · '+name); label.htmlFor='receipt-'+batch.id+'-'+index;
+    const input=document.createElement('input'); input.id=label.htmlFor; input.type='number'; input.min='0'; input.max=String(pending); input.step='1'; input.value='0'; input.required=true; form.appendChild(input);
+    addText(form,'p','最多可登記 '+pending+' 件'); inputs.push({input,item});
+    input.addEventListener('input',()=>{if(!receivingPurchase) receiptId=null;});
+  });
+  const agreeLabel=addText(form,'label','','test-label'),agree=document.createElement('input'); agree.type='checkbox'; agree.required=true; agreeLabel.appendChild(agree);
+  addText(agreeLabel,'span',batch.is_test?'確認這是測試到貨紀錄':'已核對實際到貨規格與件數');
+  const submit=addText(form,'button','確認儲存本次到貨','primary'); submit.type='submit'; submit.disabled=true; submit.className+=' receipt-confirm';
+  agree.addEventListener('change',()=>{submit.disabled=!agree.checked||receivingPurchase;});
+  open.addEventListener('click',()=>{if(!receivingPurchase) form.hidden=!form.hidden;});
+  form.addEventListener('submit',async event=>{
+    event.preventDefault(); if(receivingPurchase||confirmingPurchase||savingOrder||!agree.checked) return;
+    let lines; try {lines=receiptLines(inputs);} catch(error) {orderEl('receiptMessage').textContent=error.message; return;}
+    receiptId=receiptId||crypto.randomUUID();
+    await receivePurchaseBatch(batch,lines,receiptId);
+  });
+}
+function setReceiptBusy(busy) {
+  receivingPurchase=busy;
+  ['supplierButton','supplierTestOnly','saveOrder','staffLogout','purchaseButton','purchaseTestOnly','purchaseShowArrived'].forEach(id=>{orderEl(id).disabled=busy;});
+  document.querySelectorAll('.receipt-form input,.receipt-open,.purchase-action').forEach(el=>{el.disabled=busy;});
+  document.querySelectorAll('.receipt-confirm').forEach(button=>{button.disabled=busy||!button.closest('form').querySelector('input[type="checkbox"]').checked;});
+  if(!busy) document.querySelectorAll('.purchase-review button').forEach(button=>{button.disabled=!button.closest('.purchase-review').querySelector('input').checked;});
+}
+async function receivePurchaseBatch(batch,lines,receiptId) {
+  if(receivingPurchase||confirmingPurchase||savingOrder) return;
+  const revision=staffRevision; setReceiptBusy(true); orderEl('receiptMessage').textContent='正在記錄本次到貨…';
+  try {
+    const client=getOrderClient(),session=await client.auth.getSession(); if(session.error) throw session.error;
+    if(!session.data.session) throw new Error('Login required');
+    const result=await client.rpc('ddu_receive_purchase_batch',{receipt_id:receiptId,purchase_id:batch.id,received_items:lines});
+    if(result.error) throw result.error;
+    if(revision!==staffRevision) return;
+    const count=lines.reduce((sum,line)=>sum+line.qty,0);
+    orderEl('receiptMessage').textContent=(batch.is_test?'【測試】':'')+'已記錄廠商 '+batch.supplier_code+' 本次到貨 '+count+' 件。';
+    if(batch.items.every(item=>(item.received_qty||0)+(lines.find(line=>line.variant_id===item.variant_id)?.qty||0)===item.qty)) orderEl('purchaseShowArrived').checked=true;
+    clearSupplierList(); await loadPurchaseRecords(true); await loadTodayOrders();
+  } catch(error) {
+    if(revision!==staffRevision) return;
+    if(error.code==='P0001') {
+      clearPurchaseRecords('到貨資料已變動，請重新查看紀錄後核對剩餘件數。');
+      orderEl('receiptMessage').textContent='這次未登記：到貨資料已變動或超過剩餘件數，請重新載入紀錄。';
+    } else orderEl('receiptMessage').textContent='尚未確認到貨登記成功。請先查看到貨歷程，或用同一表單重試。';
+  } finally {setReceiptBusy(false);}
+}
+async function loadReceiptHistory(batchId,output,button) {
+  if(receivingPurchase) return;
+  const revision=staffRevision; button.disabled=true; output.hidden=false; output.replaceChildren(); addText(output,'p','正在讀取到貨歷程…');
+  try {
+    const client=getOrderClient(),session=await client.auth.getSession(); if(session.error||!session.data.session) throw new Error('Login required');
+    const data=[];
+    for(let offset=0;;offset+=1000) {
+      const page=await client.from('ddu_purchase_receipts').select('id,received_at,items,is_test').eq('batch_id',batchId)
+        .order('received_at',{ascending:false}).order('id').range(offset,offset+999);
+      if(revision!==staffRevision) return; if(page.error) throw page.error; data.push(...page.data); if(page.data.length<1000) break;
+    }
+    output.replaceChildren(); if(!data.length) addText(output,'p','尚未登記到貨。');
+    data.forEach(receipt=>{
+      addText(output,'p',(receipt.is_test?'【測試】':'')+'到貨日期：'+new Date(receipt.received_at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}));
+      receipt.items.forEach(item=>addText(output,'p',(item.product_name||item.product_code||'商品')+' / '+(item.variant_name||'規格')+' 本次到貨 '+item.qty+' 件'));
+    });
+  } catch(error) {if(revision===staffRevision) {output.replaceChildren(); addText(output,'p','無法讀取到貨歷程，請稍後再試。');}}
+  finally {button.disabled=false;}
+}
 
 </script>
 </body>
