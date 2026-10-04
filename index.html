@@ -648,6 +648,7 @@ function supplierItemText(item) {
   return (item.product_code||'未填商品編號')+' '+(item.product_name||'商品')+' / '+(item.variant_name||[item.color,item.size].filter(Boolean).join(' / ')||'未填規格')+' ｜ 顏色：'+(item.color||'未填寫')+' ｜ 尺寸：'+(item.size||'未填寫')+' × '+item.qty;
 }
 function clearSupplierList(message='客訂有變動，請重新產生叫貨清單。') {
+  if(typeof releaseSupplierImages==='function')releaseSupplierImages(orderEl('supplierGroups'));
   if(typeof clearOrderSearch==='function') clearOrderSearch('客訂資料可能已變動，請重新查詢。');
   orderEl('supplierGroups').replaceChildren(); orderEl('supplierMessage').textContent=message;
 }
@@ -682,6 +683,7 @@ async function loadSupplierOrders() {
         const label=addText(row,'label','叫貨文字（可選取複製）'); label.htmlFor='supplierText'+index;
         const text=document.createElement('textarea'); text.id=label.htmlFor; text.readOnly=true; text.rows=Math.min(12,group.items.length+2);
         text.value=(testOnly?'【測試叫貨，不供正式叫貨】\n':'')+name+'\n'+group.items.map(supplierItemText).join('\n'); row.appendChild(text);
+        appendSupplierImageControls(row,group,testOnly);
         const review=addText(row,'button',testOnly?'記錄測試叫貨 · '+group.supplier:'記錄已向廠商叫貨 · '+group.supplier,'secondary'); review.type='button'; review.className+=' purchase-action';
         const confirmation=addText(row,'div','','purchase-review'); confirmation.hidden=true;
         addText(confirmation,'p',(testOnly?'這會記錄一筆測試叫貨。':'請先完成向廠商下單，再記錄已叫貨。')+' 本次：'+group.items.length+' 種規格、'+group.qty+' 件。');
@@ -733,6 +735,7 @@ async function confirmSupplierBatch(group,testOnly,button) {
 }
 let loadingPurchases=false;
 function clearPurchaseRecords(message='已登出，叫貨紀錄已收起。') {
+  if(typeof releaseSupplierImages==='function')releaseSupplierImages(orderEl('purchaseRecords'));
   orderEl('purchaseRecords').replaceChildren(); orderEl('purchaseMessage').textContent=message;
 }
 async function loadPurchaseRecords(refreshAfterReceipt=false) {
@@ -762,6 +765,7 @@ async function loadPurchaseRecords(refreshAfterReceipt=false) {
         const pending=Math.max(0,item.qty-(item.received_qty||0)); total+=pending;
         addText(row,'p',supplierItemText(item)+' ｜ 已到貨 '+(item.received_qty||0)+' 件／未到貨 '+pending+' 件');
       });
+      if(batch.status==='ordered')appendSupplierImageControls(row,{supplier:batch.supplier_code,items:batch.items,qty:batch.items.reduce((sum,item)=>sum+item.qty,0)},batch.is_test,'已叫貨清單');
       renderReceiptControls(row,batch);
       appendCancellationControls(row,batch,'purchase');
     });
@@ -1008,5 +1012,6 @@ renderOrderCart(); updateStaffUI();
 <script src="xlsx.full.min.js"></script>
 <script src="inventory.js?v=20261004-stock-options-2"></script>
 <script src="store-ui.js?v=20261005-cancel-delete"></script>
+<script src="supplier-images.js?v=20261005-wechat-images"></script>
 </body>
 </html>
