@@ -381,6 +381,7 @@ function renderProduct(product, variants) {
   article.className = 'product-result';
   addText(article, 'h3', product.product_name || '未命名商品');
   addText(article, 'p', '商品編號：' + (product.product_code || '未填寫'));
+  appendProductPhoto(article, product);
   if (!variants.length) {
     addText(article, 'p', product.shopline_product_id ? '此商品尚無規格資料。' : '此商品缺少 SHOPLINE 商品 ID，無法對應規格。');
     return article;
@@ -993,6 +994,6 @@ renderOrderCart(); updateStaffUI();
 </script>
 <script src="xlsx.full.min.js"></script>
 <script src="inventory.js?v=20261004-stock-options-2"></script>
-<script src="store-ui.js?v=20261004-stock-options-2"></script>
+<script src="store-ui.js?v=20261005-photo-2901"></script>
 </body>
 </html>

@@ -1,3 +1,14 @@
+// 商品照以商品編號對應；保留原始照片。
+const productPhotos={'2901':'2901.jpeg'};
+function appendProductPhoto(parent,product){
+ const source=productPhotos[String(product?.product_code||'').trim()];
+ if(!source)return;
+ const photo=addText(parent,'img');photo.src=source;
+ photo.alt=(product.product_code||'')+' '+(product.product_name||'商品')+' 商品照片';
+ photo.style.width='100%';photo.style.maxWidth='420px';photo.style.height='auto';photo.style.display='block';photo.style.margin='12px 0';
+ photo.addEventListener('error',()=>{photo.remove();addText(parent,'p','商品照片暫時無法載入，請重新整理。');},{once:true});
+}
+
 // Customer orders are processed together. POS inventory remains separate for D1, D2 and C.
 let inventoryPreview=null,inventoryImportId=null,importingInventory=false,previewingInventory=false;
 const inventoryByVariant=new Map();
@@ -132,7 +143,7 @@ async function getTodayStockCatalog(){
  if(!todayStockCatalog){
   const client=getOrderClient();
   todayStockCatalog=Promise.all([
-   readFullCatalog(client,'products','id,shopline_product_id,product_name'),
+   readFullCatalog(client,'products','id,shopline_product_id,product_code,product_name'),
    readFullCatalog(client,'variants','id,shopline_variant_id,shopline_product_id,variant_name,color,size')
   ]).then(([products,variants])=>({products:new Map(products.map(p=>[p.shopline_product_id,p])),variants,byVariant:new Map(variants.map(v=>[v.shopline_variant_id,v]))}));
  }
@@ -168,7 +179,9 @@ async function appendTodayProductStock(parent,items){
   content.replaceChildren();
   products.forEach((id,index)=>{
    const {variants,stock}=data[index];
-   addText(content,'p',catalog.products.get(id)?.product_name||'商品');
+   const product=catalog.products.get(id);
+   addText(content,'p',(product?.product_code?product.product_code+' ':'')+(product?.product_name||'商品'));
+   appendProductPhoto(content,product);
    const table=addText(content,'table');table.style.width='100%';table.style.fontSize='13px';table.style.borderCollapse='collapse';
    const heading=addText(table,'tr');['顏色','尺寸','D1','D2','C','客訂規格'].forEach(label=>{const cell=addText(heading,'th',label);cell.scope='col';cell.style.padding='8px 4px';});
    variants.forEach(v=>{
