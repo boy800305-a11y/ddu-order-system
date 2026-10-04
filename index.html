@@ -101,6 +101,16 @@
       font-size: 12px;
       padding: 15px;
     }
+
+    .search-label { display: block; margin-top: 16px; font-size: 14px; }
+    #productKeyword { width: 100%; margin-top: 8px; padding: 13px; border: 1px solid #ddd; border-radius: 10px; font: inherit; font-size: 16px; }
+    #productKeyword:focus { outline: 2px solid #111; outline-offset: 2px; }
+    button:disabled { opacity: .6; cursor: wait; }
+    .card .search-status { margin-top: 12px; overflow-wrap: anywhere; }
+    .product-result { border-top: 1px solid #eee; margin-top: 16px; padding-top: 16px; overflow-wrap: anywhere; }
+    .product-result h3 { margin: 0 0 8px; font-size: 17px; }
+    .variant-list { list-style: none; padding: 0; margin: 10px 0 0; }
+    .variant-list li { background: #f5f6f8; border-radius: 10px; padding: 12px; margin-top: 8px; font-size: 14px; line-height: 1.6; }
   </style>
 </head>
 
@@ -156,9 +166,13 @@
       搜尋 SHOPLINE 商品編號、商品名稱或款式。
     </p>
 
-    <button class="secondary" onclick="searchProduct()">
-      搜尋商品
-    </button>
+<form id="productSearchForm">
+      <label class="search-label" for="productKeyword">商品編號或商品名稱</label>
+      <input id="productKeyword" type="search" placeholder="例如：2901 或商品名稱" maxlength="120" autocomplete="off">
+      <button id="searchButton" class="secondary" type="submit">搜尋商品</button>
+    </form>
+    <p id="searchStatus" class="search-status" role="status" aria-live="polite"></p>
+    <div id="searchResults" aria-busy="false"></div>
   </div>
 
   <div class="card">
@@ -181,16 +195,133 @@
 </div>
 
 <script>
+const SUPABASE_URL = "https://noytmythygijgigksyry.supabase.co";
+const SUPABASE_PUBLIC_KEY = "sb_publishable_4lbToArTpsA69mjtIE6-Sw_15C5kMid";
+
 function newOrder() {
   alert("下一步將加入 AI 客訂圖片辨識功能");
 }
-  function searchProduct() {
-  const keyword = prompt("請輸入商品編號或商品名稱");
 
-  if (keyword && keyword.trim() !== "") {
-    alert("你搜尋的是：" + keyword);
+// Quote PostgREST values so punctuation cannot change the filter structure.
+function filterValue(value) {
+  return '"' + String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+}
+function searchPattern(keyword) {
+  return '%' + keyword.replace(/[%_\\]/g, '\\$&') + '%';
+}
+async function readCatalog(table, parameters) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const url = new URL(SUPABASE_URL + '/rest/v1/' + table);
+    url.search = new URLSearchParams(parameters).toString();
+    const response = await fetch(url, {
+      headers: { apikey: SUPABASE_PUBLIC_KEY, Accept: 'application/json' },
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      const error = new Error('商品資料讀取失敗');
+      error.status = response.status;
+      throw error;
+    }
+    const rows = await response.json();
+    if (!Array.isArray(rows)) throw new Error('商品資料格式錯誤');
+    return rows;
+  } finally { clearTimeout(timer); }
+}
+async function findVariants(product) {
+  if (!product.shopline_product_id) return [];
+  const variants = [];
+  const pageSize = 1000;
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await readCatalog('variants', {
+      select: 'id,shopline_variant_id,shopline_product_id,variant_name,color,size,variant_sku',
+      shopline_product_id: 'eq.' + filterValue(product.shopline_product_id),
+      order: 'id.asc', limit: String(pageSize), offset: String(offset)
+    });
+    variants.push(...page);
+    if (page.length < pageSize) return variants;
   }
 }
+function addText(parent, tag, text, className) {
+  const element = document.createElement(tag);
+  element.textContent = text;
+  if (className) element.className = className;
+  parent.appendChild(element);
+  return element;
+}
+function renderProduct(product, variants) {
+  const article = document.createElement('article');
+  article.className = 'product-result';
+  addText(article, 'h3', product.product_name || '未命名商品');
+  addText(article, 'p', '商品編號：' + (product.product_code || '未填寫'));
+  if (!variants.length) {
+    addText(article, 'p', product.shopline_product_id ? '此商品尚無規格資料。' : '此商品缺少 SHOPLINE 商品 ID，無法對應規格。');
+    return article;
+  }
+  addText(article, 'p', '規格共 ' + variants.length + ' 筆');
+  const list = document.createElement('ul');
+  list.className = 'variant-list';
+  for (const variant of variants) {
+    const item = document.createElement('li');
+    addText(item, 'strong', variant.variant_name || '商品規格');
+    addText(item, 'div', '顏色：' + (variant.color || '未填寫') + ' ｜ 尺寸：' + (variant.size || '未填寫'));
+    if (variant.variant_sku) addText(item, 'div', '規格編號：' + variant.variant_sku);
+    list.appendChild(item);
+  }
+  article.appendChild(list);
+  return article;
+}
+let searchBusy = false;
+async function searchProduct() {
+  if (searchBusy) return;
+  const input = document.getElementById('productKeyword');
+  const button = document.getElementById('searchButton');
+  const status = document.getElementById('searchStatus');
+  const results = document.getElementById('searchResults');
+  const keyword = input.value.trim();
+  results.replaceChildren();
+  if (!keyword) {
+    status.textContent = '請輸入商品編號或商品名稱。';
+    input.focus();
+    return;
+  }
+  searchBusy = true;
+  input.disabled = true;
+  button.disabled = true;
+  button.textContent = '搜尋中…';
+  status.textContent = '正在搜尋商品與規格…';
+  results.setAttribute('aria-busy', 'true');
+  try {
+    const pattern = filterValue(searchPattern(keyword));
+    const matches = await readCatalog('products', {
+      select: 'id,shopline_product_id,product_code,product_name',
+      or: '(product_code.ilike.' + pattern + ',product_name.ilike.' + pattern + ')',
+      order: 'product_code.asc,id.asc', limit: '51'
+    });
+    if (!matches.length) {
+      status.textContent = '查無「' + keyword + '」的商品，請確認編號或商品資料是否已匯入。';
+      return;
+    }
+    const products = matches.slice(0, 50);
+    const variantGroups = await Promise.all(products.map(findVariants));
+    products.forEach((product, index) => results.appendChild(renderProduct(product, variantGroups[index])));
+    status.textContent = matches.length > 50 ? '顯示前 50 筆商品，請輸入更完整的編號或名稱縮小搜尋範圍。' : '找到 ' + products.length + ' 筆商品。';
+  } catch (error) {
+    results.replaceChildren();
+    status.textContent = error.name === 'AbortError' ? '搜尋逾時，請稍後再試。' : error.status === 401 || error.status === 403 ? '目前無法讀取商品資料，請聯絡管理員確認搜尋權限。' : '商品搜尋暫時無法連線，請稍後再試。';
+  } finally {
+    searchBusy = false;
+    input.disabled = false;
+    button.disabled = false;
+    button.textContent = '搜尋商品';
+    results.setAttribute('aria-busy', 'false');
+  }
+}
+document.getElementById('productSearchForm').addEventListener('submit', function(event) {
+  event.preventDefault();
+  searchProduct();
+});
 </script>
 
 </body>
