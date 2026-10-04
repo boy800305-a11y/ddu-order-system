@@ -112,8 +112,8 @@
     .variant-list { list-style: none; padding: 0; margin: 10px 0 0; }
     .variant-list li { background: #f5f6f8; border-radius: 10px; padding: 12px; margin-top: 8px; font-size: 14px; line-height: 1.6; }
     [hidden] { display: none !important; }
-    #orderPanel label { display:block; margin-top:14px; font-size:14px; }
-    #orderPanel input:not([type="checkbox"]), #orderPanel textarea { width:100%; padding:12px; margin-top:8px; border:1px solid #ddd; border-radius:10px; font:inherit; font-size:16px; }
+    #orderPanel label, #staffPanel label { display:block; margin-top:14px; font-size:14px; }
+    #orderPanel input:not([type="checkbox"]), #orderPanel textarea, #staffPanel input { width:100%; padding:12px; margin-top:8px; border:1px solid #ddd; border-radius:10px; font:inherit; font-size:16px; }
     .test-label { display:flex; align-items:center; gap:8px; }
     .order-line { margin-top:14px; padding:12px; background:#f5f6f8; border-radius:10px; overflow-wrap:anywhere; }
     .purchase-review { margin-top:12px; padding-top:12px; border-top:1px solid #ddd; }
@@ -141,6 +141,19 @@
 </header>
 
 <div class="container">
+
+  <section class="card" id="staffPanel" aria-label="店員帳號登入">
+    <h2>🔐 店員帳號登入</h2>
+    <p id="staffState" role="status">儲存與查看客訂需要店員登入。</p>
+    <form id="staffLoginForm">
+      <label for="staffEmail">店員電子信箱</label><input id="staffEmail" type="email" autocomplete="username" required>
+      <label for="staffPassword">密碼</label><input id="staffPassword" type="password" autocomplete="current-password" required>
+      <button class="secondary" id="staffLoginButton" type="submit">店員登入</button>
+    </form>
+    <button class="secondary" id="staffLogout" type="button" hidden>登出店員帳號</button>
+    <p id="staffMessage" class="search-status" role="status" aria-live="polite"></p>
+  </section>
+
 
   <div class="card">
     <h2>📷 新增客訂</h2>
@@ -211,13 +224,6 @@
 
   <section class="card" id="orderPanel" hidden aria-label="新增客訂表單">
     <h2>📝 新增客訂</h2>
-    <p id="staffState" role="status">儲存與查看客訂需要店員登入。</p>
-    <form id="staffLoginForm">
-      <label for="staffEmail">店員電子信箱</label><input id="staffEmail" type="email" autocomplete="username" required>
-      <label for="staffPassword">密碼</label><input id="staffPassword" type="password" autocomplete="current-password" required>
-      <button class="secondary" id="staffLoginButton" type="submit">店員登入</button>
-    </form>
-    <button class="secondary" id="staffLogout" type="button" hidden>登出店員帳號</button>
     <form id="customerOrderForm">
       <label for="orderCustomer">客訂代號</label><input id="orderCustomer" maxlength="80" placeholder="例如：LINE 暱稱或客訂編號" required>
       <div id="orderCart"></div><p id="orderTotal"></p>
@@ -421,6 +427,10 @@ let orderClient = null, orderCart = [], pendingOrderId = null, savingOrder = fal
 const orderStatuses = {pending:'待叫貨', ordered:'已叫貨', arrived:'到貨', shortage:'缺貨', notified:'已通知', collected:'已取貨', cancelled:'已取消'};
 const orderEl = id => document.getElementById(id);
 function orderMessage(text) { orderEl('orderMessage').textContent = text; }
+function openStaffPanel() {
+  orderEl('staffPanel').scrollIntoView({behavior:'smooth',block:'start'});
+  orderEl('staffEmail').focus({preventScroll:true});
+}
 function openOrderPanel() {
   orderEl('orderPanel').hidden = false;
   orderEl('orderPanel').scrollIntoView({behavior:'smooth',block:'start'});
@@ -484,9 +494,9 @@ orderEl('staffLoginForm').addEventListener('submit',async event=> {
   event.preventDefault(); const button=orderEl('staffLoginButton'); button.disabled=true;
   try {
     const {error}=await getOrderClient().auth.signInWithPassword({email:orderEl('staffEmail').value.trim(),password:orderEl('staffPassword').value});
-    if(error) { orderMessage('登入失敗，請確認店員帳號與密碼。'); return; }
-    orderEl('staffPassword').value=''; await updateStaffUI(); orderMessage('登入成功，可以儲存客訂。');
-  } catch(error) { orderMessage(error.message); } finally { button.disabled=false; }
+    if(error) { orderEl('staffMessage').textContent=('登入失敗，請確認店員帳號與密碼。'); return; }
+    orderEl('staffPassword').value=''; await updateStaffUI(); orderEl('staffMessage').textContent=('登入成功，可以儲存客訂。');
+  } catch(error) { orderEl('staffMessage').textContent=(error.message); } finally { button.disabled=false; }
 });
 orderEl('staffLogout').addEventListener('click',async()=> {
   if(savingOrder||confirmingPurchase||receivingPurchase) return;
@@ -494,8 +504,8 @@ orderEl('staffLogout').addEventListener('click',async()=> {
   try { const {error}=await getOrderClient().auth.signOut(); if(error) throw error;
     orderEl('todayOrders').replaceChildren(); orderEl('todayMessage').textContent='已登出，客訂資料已收起。';
     orderEl('orderCustomer').value=''; orderEl('orderNote').value=''; orderCart=[]; pendingOrderId=null; renderOrderCart();
-    await updateStaffUI(); orderMessage('已登出。');
-  } catch(error) { orderMessage('登出失敗，請稍後再試。'); }
+    await updateStaffUI(); orderEl('staffMessage').textContent=('已登出。');
+  } catch(error) { orderEl('staffMessage').textContent=('登出失敗，請稍後再試。'); }
 });
 async function saveCustomerOrder(event) {
   event.preventDefault(); if(savingOrder||confirmingPurchase||receivingPurchase) return;
@@ -504,7 +514,7 @@ async function saveCustomerOrder(event) {
   if(orderCart.some(item=>!Number.isInteger(item.qty)||item.qty<1||item.qty>999)) { orderMessage('數量必須是 1 到 999 的整數。'); return; }
   try {
     const client=getOrderClient(); const {data,error}=await client.auth.getSession(); if(error) throw error;
-    if(!data.session) { orderMessage('請先以店員帳號登入再儲存客訂。'); orderEl('staffEmail').focus(); return; }
+    if(!data.session) { orderMessage('請先以店員帳號登入再儲存客訂。'); openStaffPanel(); return; }
     pendingOrderId=pendingOrderId || crypto.randomUUID(); savingOrder=true;
     orderEl('saveOrder').disabled=true; orderEl('orderTest').disabled=true; orderEl('orderCustomer').disabled=true; orderEl('orderNote').disabled=true; renderOrderCart();
     orderMessage('正在儲存客訂…');
@@ -532,7 +542,7 @@ async function loadTodayOrders() {
   const output=orderEl('todayOrders'); output.replaceChildren(); orderEl('todayMessage').textContent='正在讀取今日客訂…';
   try {
     const client=getOrderClient(),session=await client.auth.getSession(); if(session.error) throw session.error;
-    if(!session.data.session) { orderEl('todayMessage').textContent='請先登入店員帳號查看客訂。'; openOrderPanel(); return; }
+    if(!session.data.session) { orderEl('todayMessage').textContent='請先登入店員帳號查看客訂。'; openStaffPanel(); return; }
     const [start,end]=taipeiDayBounds();
     const data=[];
     for(let offset=0;;offset+=1000) {
@@ -597,7 +607,7 @@ async function loadSupplierOrders() {
   clearSupplierList('正在整理待叫貨客訂…');
   try {
     const client=getOrderClient(),session=await client.auth.getSession(); if(session.error) throw session.error;
-    if(!session.data.session) {clearSupplierList('請先登入店員帳號，再產生叫貨清單。'); openOrderPanel(); return;}
+    if(!session.data.session) {clearSupplierList('請先登入店員帳號，再產生叫貨清單。'); openStaffPanel(); return;}
     const orders=[];
     // Include older pending orders so yesterday's unfulfilled requests are not lost.
     for(let offset=0;;offset+=1000) {
@@ -680,7 +690,7 @@ async function loadPurchaseRecords(refreshAfterReceipt=false) {
   orderEl('purchasePanel').hidden=false; clearPurchaseRecords('正在讀取已叫貨未到貨紀錄…');
   try {
     const client=getOrderClient(),session=await client.auth.getSession(); if(session.error) throw session.error;
-    if(!session.data.session) {clearPurchaseRecords('請先登入店員帳號。'); openOrderPanel(); return;}
+    if(!session.data.session) {clearPurchaseRecords('請先登入店員帳號。'); openStaffPanel(); return;}
     const records=[];
     for(let offset=0;;offset+=1000) {
       const page=await client.from('ddu_purchase_batches').select('id,ordered_at,supplier_code,items,is_test,status,last_received_at')
@@ -810,7 +820,7 @@ async function loadFulfillment(internal=false) {
  ['fulfillmentButton','fulfillmentTestOnly','fulfillmentShowCollected'].forEach(id=>orderEl(id).disabled=true);
  clearFulfillment('正在讀取到貨客訂…');
  try {
-  const client=getOrderClient(),session=await client.auth.getSession(); if(session.error||!session.data.session) {clearFulfillment('請先登入店員帳號。');openOrderPanel();return;}
+  const client=getOrderClient(),session=await client.auth.getSession(); if(session.error||!session.data.session) {clearFulfillment('請先登入店員帳號。');openStaffPanel();return;}
   const data=[],statuses=orderEl('fulfillmentShowCollected').checked?['arrived','notified','collected']:['arrived','notified'];
   for(let offset=0;;offset+=1000) {
    const page=await client.from('ddu_customer_orders').select('id,created_at,customer_ref,items,status,is_test,notified_at,collected_at').eq('is_test',testOnly).in('status',statuses).order('created_at').order('id').range(offset,offset+999);
@@ -872,7 +882,7 @@ async function searchCustomerOrders(event) {
  let bounds;try{bounds=orderSearchDates(orderEl('orderSearchStart').value,orderEl('orderSearchEnd').value);}catch(error){clearOrderSearch(error.message);return;}
  const revision=staffRevision;searchingOrders=true;['orderSearchButton','orderSearchKeyword','orderSearchStatus','orderSearchTestOnly','orderSearchStart','orderSearchEnd'].forEach(id=>orderEl(id).disabled=true);clearOrderSearch('正在查詢客訂…');const searchRevision=orderSearchRevision;
  try {
-  const client=getOrderClient(),session=await client.auth.getSession();if(session.error)throw session.error;if(!session.data.session){clearOrderSearch('請先登入店員帳號查詢。');openOrderPanel();return;}
+  const client=getOrderClient(),session=await client.auth.getSession();if(session.error)throw session.error;if(!session.data.session){clearOrderSearch('請先登入店員帳號查詢。');openStaffPanel();return;}
   const matches=[];let complete=false;
   for(let offset=0;matches.length<=100;offset+=1000){
    let query=client.from('ddu_customer_orders').select('id,created_at,customer_ref,note,items,status,is_test,notified_at,collected_at').eq('is_test',testOnly);
