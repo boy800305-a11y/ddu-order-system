@@ -280,7 +280,7 @@
 
   <section class="card" id="purchasePanel" aria-label="已叫貨未到貨紀錄">
     <h2>📦 已叫貨未到貨</h2>
-    <p>查看本人已記錄的廠商叫貨批次、日期及未到貨件數。</p>
+    <p>查看本人已記錄的廠商叫貨批次、日期及未到貨件數。取消整批叫貨會刪除對應客訂。</p>
     <label class="supplier-mode"><input type="checkbox" id="purchaseTestOnly"> 僅查看測試叫貨紀錄</label>
     <label class="supplier-mode"><input type="checkbox" id="purchaseShowArrived"> 包含已全部到貨的叫貨紀錄</label>
     <button class="secondary" id="purchaseButton" type="button">查看已叫貨未到貨紀錄</button>
@@ -763,6 +763,7 @@ async function loadPurchaseRecords(refreshAfterReceipt=false) {
         addText(row,'p',supplierItemText(item)+' ｜ 已到貨 '+(item.received_qty||0)+' 件／未到貨 '+pending+' 件');
       });
       renderReceiptControls(row,batch);
+      appendCancellationControls(row,batch,'purchase');
     });
     orderEl('purchaseMessage').textContent=(testOnly?'【測試紀錄】':'正式紀錄：')+records.length+' 批叫貨，共 '+total+' 件未到貨。';
   } catch(error) {if(revision===staffRevision) clearPurchaseRecords('無法讀取叫貨紀錄，請確認權限及連線後再試。');}
@@ -970,21 +971,33 @@ function beginOrderEdit(order){
  editingOrder={id:order.id,revision:order.revision,is_test:order.is_test};editChangeId=null;
  orderCart=order.items.map(item=>({...item}));orderEl('orderCustomer').value=order.customer_ref;orderEl('orderNote').value=order.note||'';orderEl('orderTest').checked=order.is_test;orderEl('orderTest').disabled=true;orderEl('saveOrder').textContent='儲存修改';orderEl('exitOrderEdit').hidden=false;orderEl('discardOrderDraft').hidden=true;orderEl('orderEditState').textContent='正在修改'+(order.is_test?'【測試】':'')+order.customer_ref+'；保留原建立日期與客訂編號。';renderOrderCart();openOrderPanel();orderMessage('可移除舊規格，再搜尋加入新規格。');orderEl('orderPanel').scrollIntoView({behavior:'smooth',block:'start'});
 }
+function appendCancellationControls(row,record,kind){
+ const purchase=kind==='purchase';
+ if((record.items||[]).some(item=>Number(item.received_qty)>0)||['partial','arrived','notified','collected'].includes(record.status))return;
+ const label=addText(row,'label','','supplier-mode');const confirm=document.createElement('input');confirm.type='checkbox';label.appendChild(confirm);
+ addText(label,'span',purchase?'我確認刪除整批叫貨及對應客訂，不可復原':'我確認刪除這張客訂及其叫貨份額，不可復原');
+ const cancel=addText(row,'button',purchase?'取消叫貨並刪除客訂':'取消客訂並刪除','secondary');cancel.type='button';cancel.disabled=true;
+ confirm.addEventListener('change',()=>{cancel.disabled=!confirm.checked;});
+ cancel.addEventListener('click',async()=>{
+  if(!confirm.checked||savingOrder||confirmingPurchase||receivingPurchase)return;
+  if(editingOrder){orderMessage('請先儲存或放棄正在修改的客訂，再取消。');openOrderPanel();return;}
+  const revision=staffRevision;savingOrder=true;cancel.disabled=true;confirm.disabled=true;const message=addText(row,'p','正在刪除…');
+  try{
+   const result=await getOrderClient().rpc('ddu_delete_cancelled_request',{target_kind:kind,target_id:record.id,expected_items:record.items});if(result.error)throw result.error;
+   if(revision!==staffRevision)return;
+   clearSupplierList();clearPurchaseRecords('資料已刪除，請重新查看叫貨紀錄。');clearFulfillment('客訂已刪除，請重新查看。');
+   const text=purchase?'已取消並刪除叫貨及對應客訂，不再列入待叫貨。':'客訂 '+record.customer_ref+' 已取消並刪除，不再列入待叫貨。';
+   orderMessage(text);orderEl('purchaseMessage').textContent=text;
+   row.hidden=true;await loadTodayOrders();
+  }catch(error){if(revision===staffRevision)message.textContent=error.code==='P0002'?'已有到貨紀錄，無法取消刪除。':error.code==='P0001'?'資料已變更，請重新查詢後再取消。':'尚未確認刪除成功，請重新查詢後再試。';}
+  finally{savingOrder=false;confirm.disabled=false;cancel.disabled=!confirm.checked;}
+ });
+}
 function appendAmendActions(row,order){
  if(order.modified_at)addText(row,'p','修改日期：'+new Date(order.modified_at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}));
  if(order.cancelled_at)addText(row,'p','取消日期：'+new Date(order.cancelled_at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}));
- if(!canAmendOrder(order)){if(order.status==='pending')addText(row,'p','已有部分商品叫貨，無法直接修改或取消。');return;}
- const edit=addText(row,'button','修改客訂','secondary');edit.type='button';edit.addEventListener('click',()=>beginOrderEdit(order));
- const label=addText(row,'label','','supplier-mode');const confirm=document.createElement('input');confirm.type='checkbox';label.appendChild(confirm);addText(label,'span','我確認取消這張尚未叫貨的客訂');
- const cancel=addText(row,'button','取消客訂','secondary');cancel.type='button';cancel.disabled=true;confirm.addEventListener('change',()=>{cancel.disabled=!confirm.checked;});let changeId=null;
- cancel.addEventListener('click',async()=>{
-  if(!confirm.checked||savingOrder||confirmingPurchase||receivingPurchase)return;
-  if(editingOrder&&editingOrder.id===order.id){orderMessage('請先放棄這張客訂的修改，再取消客訂。');openOrderPanel();return;}
-  const revision=staffRevision;savingOrder=true;cancel.disabled=true;edit.disabled=true;confirm.disabled=true;const message=addText(row,'p','正在取消客訂…');
-  try{changeId=changeId||crypto.randomUUID();const result=await getOrderClient().rpc('ddu_amend_customer_order',{customer_order_id:order.id,change_id:changeId,expected_revision:order.revision,action:'cancel'});if(result.error)throw result.error;if(revision!==staffRevision)return;clearSupplierList();orderMessage('客訂 '+order.customer_ref+' 已取消；保留紀錄，不再計入待叫貨。');await loadTodayOrders();}
-  catch(error){if(revision===staffRevision)message.textContent=error.code==='P0001'?'客訂已變更或已有商品叫貨，請重新查詢。':'尚未確認取消成功，請重新查詢後再試。';}
-  finally{savingOrder=false;edit.disabled=false;confirm.disabled=false;cancel.disabled=!confirm.checked;}
- });
+ if(canAmendOrder(order)){const edit=addText(row,'button','修改客訂','secondary');edit.type='button';edit.addEventListener('click',()=>beginOrderEdit(order));}
+ appendCancellationControls(row,order,'customer');
 }
 orderEl('exitOrderEdit').addEventListener('click',()=>{if(savingOrder||confirmingPurchase||receivingPurchase)return;resetOrderDraft();orderMessage('已放棄未儲存的表單內容。');});
 ['orderCustomer','orderNote','orderTest'].forEach(id=>orderEl(id).addEventListener('input',()=>{if(!savingOrder)editChangeId=null;}));
@@ -994,6 +1007,6 @@ renderOrderCart(); updateStaffUI();
 </script>
 <script src="xlsx.full.min.js"></script>
 <script src="inventory.js?v=20261004-stock-options-2"></script>
-<script src="store-ui.js?v=20261005-photo-top-align"></script>
+<script src="store-ui.js?v=20261005-cancel-delete"></script>
 </body>
 </html>
