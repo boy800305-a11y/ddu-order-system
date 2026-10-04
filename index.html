@@ -236,7 +236,7 @@ async function findVariants(product) {
   for (let offset = 0; ; offset += pageSize) {
     const page = await readCatalog('variants', {
       select: 'id,shopline_variant_id,shopline_product_id,variant_name,color,size,variant_sku',
-      shopline_product_id: 'eq.' + filterValue(product.shopline_product_id),
+      shopline_product_id: 'eq.' + String(product.shopline_product_id),
       order: 'id.asc', limit: String(pageSize), offset: String(offset)
     });
     variants.push(...page);
