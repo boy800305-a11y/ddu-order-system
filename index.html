@@ -146,6 +146,24 @@
 </header>
 
 <div class="container">
+  <section class="card" aria-label="店別選擇">
+    <h2>🏬 店別</h2>
+    <label for="storeSelect">目前作業店別</label>
+    <select id="storeSelect" style="width:100%;padding:12px;margin-top:8px;border:1px solid #ddd;border-radius:10px;font:inherit"><option value="D1">D1</option><option value="D2">D2</option><option value="C">C</option></select>
+    <p id="storeMessage" role="status" style="margin-top:12px"></p>
+  </section>
+  <section class="card" aria-label="三店庫存更新">
+    <h2>📊 三店庫存更新</h2>
+    <p>上傳 SHOPLINE 庫存報表，先預覽，再一鍵更新三家店。庫存為報表快照；客訂不會自動扣庫存。</p>
+    <p id="inventoryLastUpdate" role="status" style="margin-top:12px"></p>
+    <label for="inventoryFile" style="display:block;margin-top:14px">庫存報表（.xls／.xlsx／.csv）</label>
+    <input id="inventoryFile" type="file" accept=".xls,.xlsx,.csv" style="max-width:100%;margin-top:8px">
+    <button id="previewInventory" class="secondary" type="button">預覽庫存報表</button>
+    <div id="inventoryPreview" style="margin-top:12px;overflow-wrap:anywhere"></div>
+    <label id="inventoryConfirmLabel" hidden style="display:block;margin-top:12px"><input id="confirmInventory" type="checkbox" disabled> 已核對預覽，確認更新三店的已對應規格；未對應資料保留原值。</label>
+    <button id="updateInventory" class="primary" type="button" disabled>一鍵更新三店庫存</button>
+    <p id="inventoryMessage" role="status" aria-live="polite" style="margin-top:12px"></p>
+  </section>
 
   <section class="card" id="staffPanel" aria-label="店員帳號登入">
     <h2>🔐 店員帳號登入</h2>
@@ -219,7 +237,7 @@
   <div class="card">
     <h2>🏭 廠商叫貨</h2>
     <p>
-      彙整本人所有待叫貨客訂，依廠商、規格加總；正式清單排除測試客訂。
+      彙整目前店別的本人待叫貨客訂，依廠商、規格加總；正式清單排除測試客訂。
     </p>
 
     <label class="supplier-mode"><input type="checkbox" id="supplierTestOnly"> 測試客訂模式（不計入正式叫貨）</label>
@@ -282,7 +300,7 @@
 
   <section class="card" id="orderSearchPanel" aria-label="客訂查詢">
     <h2>🔎 客訂查詢</h2>
-    <p>跨日期查詢本人客訂，可搜尋客訂代號、商品編號、名稱或規格。</p>
+    <p>跨日期查詢目前店別的本人客訂，可搜尋客訂代號、商品編號、名稱或規格。</p>
     <form id="orderSearchForm">
       <label for="orderSearchKeyword">客訂代號或商品</label><input id="orderSearchKeyword" type="search" maxlength="100" placeholder="例如：2901 或客訂代號">
       <label for="orderSearchStatus">客訂狀態</label><select id="orderSearchStatus">
@@ -373,6 +391,7 @@ function renderProduct(product, variants) {
     addText(item, 'strong', variant.variant_name || '商品規格');
     addText(item, 'div', '顏色：' + (variant.color || '未填寫') + ' ｜ 尺寸：' + (variant.size || '未填寫'));
     if (variant.variant_sku) addText(item, 'div', '規格編號：' + variant.variant_sku);
+    appendStock(item, variant);
     const choose = addText(item, 'button', '加入客訂 · ' + (variant.variant_name || '商品規格'), 'secondary');
     choose.type = 'button';
     choose.addEventListener('click', () => { if (!savingOrder&&!confirmingPurchase&&!receivingPurchase) addOrderItem(product, variant); });
@@ -414,6 +433,7 @@ async function searchProduct() {
     }
     const products = matches.slice(0, 50);
     const variantGroups = await Promise.all(products.map(findVariants));
+    await attachInventoryStock(variantGroups.flat());
     products.forEach((product, index) => results.appendChild(renderProduct(product, variantGroups[index])));
     status.textContent = matches.length > 50 ? '顯示前 50 筆商品，請輸入更完整的編號或名稱縮小搜尋範圍。' : '找到 ' + products.length + ' 筆商品。';
   } catch (error) {
@@ -516,16 +536,17 @@ orderEl('staffLoginForm').addEventListener('submit',async event=> {
   try {
     const {error}=await getOrderClient().auth.signInWithPassword({email:orderEl('staffEmail').value.trim(),password:orderEl('staffPassword').value});
     if(error) { orderEl('staffMessage').textContent=('登入失敗，請確認店員帳號與密碼。'); return; }
-    orderEl('staffPassword').value=''; await updateStaffUI(); orderEl('staffMessage').textContent=('登入成功，可以儲存客訂。');
+    orderEl('staffPassword').value=''; await updateStaffUI(); await refreshInventoryTime(); orderEl('staffMessage').textContent=('登入成功，可以儲存客訂。');
   } catch(error) { orderEl('staffMessage').textContent=(error.message); } finally { button.disabled=false; }
 });
 orderEl('staffLogout').addEventListener('click',async()=> {
-  if(savingOrder||confirmingPurchase||receivingPurchase) return;
+  if(savingOrder||confirmingPurchase||receivingPurchase||importingInventory||previewingInventory) return;
+  clearInventoryPreview();
   staffRevision++; clearOrderSearch('已登出，查詢資料已收起。'); clearFulfillment('已登出，客訂資料已收起。'); orderEl('fulfillmentActionMessage').textContent=''; clearSupplierList('已登出，叫貨清單已收起。'); clearPurchaseRecords(); orderEl('receiptMessage').textContent='';
   try { const {error}=await getOrderClient().auth.signOut(); if(error) throw error;
     orderEl('todayOrders').replaceChildren(); orderEl('todayMessage').textContent='已登出，客訂資料已收起。';
     resetOrderDraft();
-    await updateStaffUI(); orderEl('staffMessage').textContent=('已登出。');
+    await updateStaffUI(); await refreshInventoryTime(); inventoryByVariant.clear(); orderEl('searchResults').replaceChildren(); orderEl('staffMessage').textContent=('已登出。');
   } catch(error) { orderEl('staffMessage').textContent=('登出失敗，請稍後再試。'); }
 });
 async function saveCustomerOrder(event) {
@@ -541,8 +562,8 @@ async function saveCustomerOrder(event) {
     orderMessage(editingOrder?'正在儲存修改…':'正在儲存客訂…');
     const wasEditing=!!editingOrder;
     if(wasEditing)editChangeId=editChangeId||crypto.randomUUID();
-    const result=wasEditing?await client.rpc('ddu_amend_customer_order',{customer_order_id:editingOrder.id,change_id:editChangeId,expected_revision:editingOrder.revision,action:'edit',customer_reference:customer,order_note:note,requested_items:orderCart.map(item=>({variant_id:item.variant_id,qty:item.qty}))}):await client.rpc('ddu_create_customer_order',{order_id:pendingOrderId,customer_reference:customer,order_note:note,
-      requested_items:orderCart.map(item=>({variant_id:item.variant_id,qty:item.qty})),test_order:orderEl('orderTest').checked});
+    const result=wasEditing?await client.rpc('ddu_amend_customer_order',{customer_order_id:editingOrder.id,change_id:editChangeId,expected_revision:editingOrder.revision,action:'edit',customer_reference:customer,order_note:note,requested_items:orderCart.map(item=>({variant_id:item.variant_id,qty:item.qty}))}):await client.rpc('ddu_create_store_order',{order_id:pendingOrderId,customer_reference:customer,order_note:note,
+      requested_items:orderCart.map(item=>({variant_id:item.variant_id,qty:item.qty})),test_order:orderEl('orderTest').checked,store:currentStore()});
     if(result.error) throw result.error;
     resetOrderDraft();
     clearSupplierList(); setOrderPanelOpen(false); orderMessage(wasEditing?'客訂修改已儲存，仍為「待叫貨」。':'客訂已儲存，狀態為「待叫貨」。'); await loadTodayOrders();
@@ -569,14 +590,14 @@ async function loadTodayOrders() {
     const [start,end]=taipeiDayBounds();
     const data=[];
     for(let offset=0;;offset+=1000) {
-      const page=await client.from('ddu_customer_orders').select('id,created_at,customer_ref,note,items,status,is_test,notified_at,collected_at,revision,modified_at,cancelled_at')
+      const page=await client.from('ddu_customer_orders').select('id,created_at,customer_ref,note,items,status,is_test,notified_at,collected_at,revision,modified_at,cancelled_at,store_code').eq('store_code',currentStore())
         .gte('created_at',start).lt('created_at',end).order('created_at',{ascending:false}).order('id').range(offset,offset+999);
       if(revision!==staffRevision) return;
       if(page.error) throw page.error; data.push(...page.data); if(page.data.length<1000) break;
     }
     data.slice(0,100).forEach(order=>{
       const row=addText(output,'article','','order-line');
-      addText(row,'h3',(order.is_test?'【測試】':'')+order.customer_ref);
+      addText(row,'h3','【'+order.store_code+'】'+(order.is_test?'【測試】':'')+order.customer_ref);
       addText(row,'p',(orderStatuses[order.status]||order.status)+' · '+new Date(order.created_at).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour:'2-digit',minute:'2-digit'}));
       (order.items||[]).forEach(item=>addText(row,'p',(item.product_name||item.product_code)+' / '+(item.variant_name||'規格')+' × '+item.qty+(item.ordered_qty?'（已叫貨 '+item.ordered_qty+' 件／已到貨 '+(item.received_qty||0)+' 件）':'')));
       if(order.note) addText(row,'p','備註：'+order.note); fulfillmentDates(row,order); appendAmendActions(row,order);
@@ -635,7 +656,7 @@ async function loadSupplierOrders() {
     const orders=[];
     // Include older pending orders so yesterday's unfulfilled requests are not lost.
     for(let offset=0;;offset+=1000) {
-      const page=await client.from('ddu_customer_orders').select('id,items,status,is_test')
+      const page=await client.from('ddu_customer_orders').select('id,items,status,is_test,store_code').eq('store_code',currentStore())
         .eq('status','pending').eq('is_test',testOnly).order('id').range(offset,offset+999);
       if(revision!==staffRevision) return;
       if(page.error) throw page.error;
@@ -653,7 +674,7 @@ async function loadSupplierOrders() {
       if(group.supplier) {
         const label=addText(row,'label','叫貨文字（可選取複製）'); label.htmlFor='supplierText'+index;
         const text=document.createElement('textarea'); text.id=label.htmlFor; text.readOnly=true; text.rows=Math.min(12,group.items.length+2);
-        text.value=(testOnly?'【測試叫貨，不供正式叫貨】\n':'')+name+'\n'+group.items.map(supplierItemText).join('\n'); row.appendChild(text);
+        text.value='【'+currentStore()+' 店】\n'+(testOnly?'【測試叫貨，不供正式叫貨】\n':'')+name+'\n'+group.items.map(supplierItemText).join('\n'); row.appendChild(text);
         const review=addText(row,'button',testOnly?'記錄測試叫貨 · '+group.supplier:'記錄已向廠商叫貨 · '+group.supplier,'secondary'); review.type='button'; review.className+=' purchase-action';
         const confirmation=addText(row,'div','','purchase-review'); confirmation.hidden=true;
         addText(confirmation,'p',(testOnly?'這會記錄一筆測試叫貨。':'請先完成向廠商下單，再記錄已叫貨。')+' 本次：'+group.items.length+' 種規格、'+group.qty+' 件。');
@@ -717,7 +738,7 @@ async function loadPurchaseRecords(refreshAfterReceipt=false) {
     if(!session.data.session) {clearPurchaseRecords('請先登入店員帳號。'); openStaffPanel(); return;}
     const records=[];
     for(let offset=0;;offset+=1000) {
-      const page=await client.from('ddu_purchase_batches').select('id,ordered_at,supplier_code,items,is_test,status,last_received_at')
+      const page=await client.from('ddu_purchase_batches').select('id,ordered_at,supplier_code,items,is_test,status,last_received_at,store_code').eq('store_code',currentStore())
         .in('status',showArrived?['ordered','partial','arrived']:['ordered','partial']).eq('is_test',testOnly).order('ordered_at',{ascending:false}).order('id').range(offset,offset+999);
       if(revision!==staffRevision) return;
       if(page.error) throw page.error; records.push(...page.data); if(page.data.length<1000) break;
@@ -725,7 +746,7 @@ async function loadPurchaseRecords(refreshAfterReceipt=false) {
     let total=0; const output=orderEl('purchaseRecords');
     records.forEach(batch=>{
       const row=addText(output,'article','','order-line');
-      addText(row,'h3',(batch.is_test?'【測試】':'')+'廠商 '+batch.supplier_code);
+      addText(row,'h3','【'+batch.store_code+'】'+(batch.is_test?'【測試】':'')+'廠商 '+batch.supplier_code);
       addText(row,'p','叫貨日期：'+new Date(batch.ordered_at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}));
       addText(row,'p','叫貨編號：'+batch.id);
       addText(row,'p',batch.status==='arrived'?'已全部到貨':batch.status==='partial'?'部分到貨':'尚未到貨');
@@ -820,7 +841,7 @@ async function loadReceiptHistory(batchId,output,button) {
     const client=getOrderClient(),session=await client.auth.getSession(); if(session.error||!session.data.session) throw new Error('Login required');
     const data=[];
     for(let offset=0;;offset+=1000) {
-      const page=await client.from('ddu_purchase_receipts').select('id,received_at,items,is_test').eq('batch_id',batchId)
+      const page=await client.from('ddu_purchase_receipts').select('id,received_at,items,is_test,store_code').eq('store_code',currentStore()).eq('batch_id',batchId)
         .order('received_at',{ascending:false}).order('id').range(offset,offset+999);
       if(revision!==staffRevision) return; if(page.error) throw page.error; data.push(...page.data); if(page.data.length<1000) break;
     }
@@ -849,13 +870,13 @@ async function loadFulfillment(internal=false) {
   const client=getOrderClient(),session=await client.auth.getSession(); if(session.error||!session.data.session) {clearFulfillment('請先登入店員帳號。');openStaffPanel();return;}
   const data=[],statuses=orderEl('fulfillmentShowCollected').checked?['arrived','notified','collected']:['arrived','notified'];
   for(let offset=0;;offset+=1000) {
-   const page=await client.from('ddu_customer_orders').select('id,created_at,customer_ref,items,status,is_test,notified_at,collected_at').eq('is_test',testOnly).in('status',statuses).order('created_at').order('id').range(offset,offset+999);
+   const page=await client.from('ddu_customer_orders').select('id,created_at,customer_ref,items,status,is_test,notified_at,collected_at,store_code').eq('store_code',currentStore()).eq('is_test',testOnly).in('status',statuses).order('created_at').order('id').range(offset,offset+999);
    if(revision!==staffRevision)return; if(page.error)throw page.error;data.push(...page.data);if(page.data.length<1000)break;
   }
   clearFulfillment((testOnly?'【測試】':'')+'共 '+data.length+' 張到貨客訂。');
   for(const order of data) {
    const row=addText(orderEl('fulfillmentOrders'),'article','','order-line');
-   addText(row,'h3',(order.is_test?'【測試】':'')+order.customer_ref);addText(row,'p',orderStatuses[order.status]);
+   addText(row,'h3','【'+order.store_code+'】'+(order.is_test?'【測試】':'')+order.customer_ref);addText(row,'p',orderStatuses[order.status]);
    order.items.forEach(item=>addText(row,'p',(item.product_name||item.product_code)+' / '+(item.variant_name||'規格')+' × '+item.qty));fulfillmentDates(row,order);
    if(order.status==='collected')continue;
    const next=order.status==='arrived'?'notified':'collected',label=next==='notified'?'記錄已通知':'記錄已取貨';
@@ -880,7 +901,7 @@ async function completeCustomerOrder(order,next) {
   const result=await client.rpc('ddu_complete_customer_order',{customer_order_id:order.id,target_status:next,expected_status:order.status});if(result.error)throw result.error;
   if(revision!==staffRevision)return;
   if(next==='collected')orderEl('fulfillmentShowCollected').checked=true;
-  orderEl('fulfillmentActionMessage').textContent=(order.is_test?'【測試】':'')+order.customer_ref+' 已記錄為「'+orderStatuses[next]+'」。';
+  orderEl('fulfillmentActionMessage').textContent='【'+order.store_code+'】'+(order.is_test?'【測試】':'')+order.customer_ref+' 已記錄為「'+orderStatuses[next]+'」。';
   if(typeof clearOrderSearch==='function')clearOrderSearch('客訂狀態已更新，請重新查詢。');
   await loadFulfillment(true);await loadTodayOrders();
  }catch(error){if(revision===staffRevision){if(error.code==='P0001')clearFulfillment('客訂狀態已變動，請重新查看。');orderEl('fulfillmentActionMessage').textContent='尚未確認儲存成功，請重新查看客訂後再試。';}}
@@ -912,7 +933,7 @@ async function searchCustomerOrders(event) {
   const client=getOrderClient(),session=await client.auth.getSession();if(session.error)throw session.error;if(!session.data.session){clearOrderSearch('請先登入店員帳號查詢。');openStaffPanel();return;}
   const matches=[];let complete=false;
   for(let offset=0;matches.length<=100;offset+=1000){
-   let query=client.from('ddu_customer_orders').select('id,created_at,customer_ref,note,items,status,is_test,notified_at,collected_at,revision,modified_at,cancelled_at').eq('is_test',testOnly);
+   let query=client.from('ddu_customer_orders').select('id,created_at,customer_ref,note,items,status,is_test,notified_at,collected_at,revision,modified_at,cancelled_at,store_code').eq('store_code',currentStore()).eq('is_test',testOnly);
    if(status)query=query.eq('status',status);if(bounds.start)query=query.gte('created_at',bounds.start);if(bounds.end)query=query.lt('created_at',bounds.end);
    const page=await query.order('created_at',{ascending:false}).order('id').range(offset,offset+999);
    if(revision!==staffRevision||searchRevision!==orderSearchRevision)return;if(page.error)throw page.error;
@@ -921,7 +942,7 @@ async function searchCustomerOrders(event) {
   if(revision!==staffRevision||searchRevision!==orderSearchRevision)return;
   const output=orderEl('orderSearchResults');output.replaceChildren();
   for(const order of matches.slice(0,100)){
-   const row=addText(output,'article','','order-line');addText(row,'h3',(order.is_test?'【測試】':'')+order.customer_ref);
+   const row=addText(output,'article','','order-line');addText(row,'h3','【'+order.store_code+'】'+(order.is_test?'【測試】':'')+order.customer_ref);
    addText(row,'p',(orderStatuses[order.status]||order.status)+' · 建立日期：'+new Date(order.created_at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}));
    order.items.forEach(item=>addText(row,'p',(item.product_code||'')+' '+(item.product_name||'商品')+' / '+(item.variant_name||'規格')+' × '+item.qty+(item.ordered_qty?'（已叫貨 '+item.ordered_qty+' 件／已到貨 '+(item.received_qty||0)+' 件）':'')));
    if(order.note)addText(row,'p','備註：'+order.note);fulfillmentDates(row,order);appendAmendActions(row,order);
@@ -940,7 +961,7 @@ function beginOrderEdit(order){
  if(orderCart.length||orderEl('orderCustomer').value.trim()||orderEl('orderNote').value.trim()){orderMessage('目前有未儲存內容，請先儲存或按「放棄表單內容」後再編輯。');openOrderPanel();orderEl('orderPanel').scrollIntoView({behavior:'smooth',block:'start'});return;}
  if(!canAmendOrder(order))return;
  editingOrder={id:order.id,revision:order.revision,is_test:order.is_test};editChangeId=null;
- orderCart=order.items.map(item=>({...item}));orderEl('orderCustomer').value=order.customer_ref;orderEl('orderNote').value=order.note||'';orderEl('orderTest').checked=order.is_test;orderEl('orderTest').disabled=true;orderEl('saveOrder').textContent='儲存修改';orderEl('exitOrderEdit').hidden=false;orderEl('discardOrderDraft').hidden=true;orderEl('orderEditState').textContent='正在修改'+(order.is_test?'【測試】':'')+order.customer_ref+'；保留原建立日期與客訂編號。';renderOrderCart();openOrderPanel();orderMessage('可移除舊規格，再搜尋加入新規格。');orderEl('orderPanel').scrollIntoView({behavior:'smooth',block:'start'});
+ orderCart=order.items.map(item=>({...item}));orderEl('orderCustomer').value=order.customer_ref;orderEl('orderNote').value=order.note||'';orderEl('orderTest').checked=order.is_test;orderEl('orderTest').disabled=true;orderEl('saveOrder').textContent='儲存修改';orderEl('exitOrderEdit').hidden=false;orderEl('discardOrderDraft').hidden=true;orderEl('orderEditState').textContent='正在修改'+'【'+order.store_code+'】'+(order.is_test?'【測試】':'')+order.customer_ref+'；保留原建立日期與客訂編號。';renderOrderCart();openOrderPanel();orderMessage('可移除舊規格，再搜尋加入新規格。');orderEl('orderPanel').scrollIntoView({behavior:'smooth',block:'start'});
 }
 function appendAmendActions(row,order){
  if(order.modified_at)addText(row,'p','修改日期：'+new Date(order.modified_at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}));
@@ -964,5 +985,8 @@ orderEl('exitOrderEdit').addEventListener('click',()=>{if(savingOrder||confirmin
 orderEl('discardOrderDraft').addEventListener('click',()=>{if(savingOrder||confirmingPurchase||receivingPurchase)return;resetOrderDraft();orderMessage('已放棄未儲存的表單內容。');});
 renderOrderCart(); updateStaffUI();
 </script>
+<script src="xlsx.full.min.js"></script>
+<script src="inventory.js"></script>
+<script src="store-ui.js"></script>
 </body>
 </html>
