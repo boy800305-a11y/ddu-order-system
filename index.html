@@ -265,6 +265,10 @@
     <h2>📋 今日客訂清單</h2>
     <p id="todayMessage" role="status" aria-live="polite"></p>
     <div id="todayOrders"></div>
+    <h3>今日客訂自動叫貨圖</h3>
+    <p>只加總今天的正式待叫貨客訂。設定照片位置後自動出圖；開著此頁時每分鐘檢查更新。圖片不會自動傳送或記錄已叫貨。</p>
+    <p id="todayImageMessage" role="status"></p>
+    <div id="todaySupplierImages"></div>
     <h3>今日庫存 −1 待處理</h3>
     <p>從 2026/10/4 起算，以庫存更新前後比對：只有新變成 −1 的商品才列為今日新客訂。起算前的 −1 舊客訂已排除。三店共同處理、來源店分別標示；尚未填入客人資料。</p>
     <p id="negativeOrderMessage" role="status" aria-live="polite"></p>
@@ -539,13 +543,13 @@ orderEl('staffLoginForm').addEventListener('submit',async event=> {
   try {
     const {error}=await getOrderClient().auth.signInWithPassword({email:orderEl('staffEmail').value.trim(),password:orderEl('staffPassword').value});
     if(error) { orderEl('staffMessage').textContent=('登入失敗，請確認店員帳號與密碼。'); return; }
-    orderEl('staffPassword').value=''; await updateStaffUI(); await refreshInventoryTime(); orderEl('staffMessage').textContent=('登入成功，可以儲存客訂。');
+    orderEl('staffPassword').value=''; await updateStaffUI(); await refreshInventoryTime(); await loadTodayOrders(); orderEl('staffMessage').textContent=('登入成功，可以儲存客訂。');
   } catch(error) { orderEl('staffMessage').textContent=(error.message); } finally { button.disabled=false; }
 });
 orderEl('staffLogout').addEventListener('click',async()=> {
   if(savingOrder||confirmingPurchase||receivingPurchase||importingInventory||previewingInventory) return;
   clearInventoryPreview();
-  staffRevision++; clearOrderSearch('已登出，查詢資料已收起。'); clearFulfillment('已登出，客訂資料已收起。'); orderEl('fulfillmentActionMessage').textContent=''; clearSupplierList('已登出，叫貨清單已收起。'); clearPurchaseRecords(); orderEl('receiptMessage').textContent='';
+  staffRevision++; clearAutoTodaySupplierImages(); clearOrderSearch('已登出，查詢資料已收起。'); clearFulfillment('已登出，客訂資料已收起。'); orderEl('fulfillmentActionMessage').textContent=''; clearSupplierList('已登出，叫貨清單已收起。'); clearPurchaseRecords(); orderEl('receiptMessage').textContent='';
   try { const {error}=await getOrderClient().auth.signOut(); if(error) throw error;
     orderEl('todayOrders').replaceChildren(); orderEl('todayMessage').textContent='已登出，客訂資料已收起。';
     orderEl('negativeOrders').replaceChildren(); orderEl('negativeOrderMessage').textContent='已登出，庫存待處理清單已收起。';
@@ -609,11 +613,12 @@ async function loadTodayOrders() {
       if(order.note) addText(row,'p','備註：'+order.note); fulfillmentDates(row,order); appendAmendActions(row,order);
       appendTodayProductStock(row,order.items||[]);
     });
+    renderAutoTodaySupplierImages(data);
     orderEl('todayMessage').textContent=data.length?'今日 '+data.length+' 張客訂'+(data.length>100?'，顯示最新 100 張。':'。'):'今天尚無客訂。';
     ['pending','ordered','shortage'].forEach(status=>{
       orderEl('count'+status).textContent=orderStatuses[status]+' '+data.filter(order=>order.status===status&&!order.is_test).length;
     });
-  } catch(error) { if(revision!==staffRevision) return; orderEl('todayMessage').textContent='無法讀取客訂，請確認店員權限及連線後重新整理。'; }
+  } catch(error) { if(revision!==staffRevision) return; clearAutoTodaySupplierImages(); orderEl('todayMessage').textContent='無法讀取客訂，請確認店員權限及連線後重新整理。'; }
   finally { loadingToday=false; orderEl('todayButton').disabled=false; }
 }
 orderEl('todayButton').addEventListener('click',loadTodayOrders);
@@ -1012,6 +1017,6 @@ renderOrderCart(); updateStaffUI();
 <script src="xlsx.full.min.js"></script>
 <script src="inventory.js?v=20261004-stock-options-2"></script>
 <script src="store-ui.js?v=20261005-cancel-delete"></script>
-<script src="supplier-images.js?v=20261005-wechat-images"></script>
+<script src="supplier-images.js?v=20261005-auto-today"></script>
 </body>
 </html>

@@ -57,7 +57,7 @@ async function makeSupplierImages(group,testOnly=false,phase='待叫貨清單'){
  }
  return files;
 }
-function appendPhotoMarkEditor(parent,group){
+function appendPhotoMarkEditor(parent,group,onSaved=()=>{}){
  const toggle=addText(parent,'button','設定照片顏色標記位置','secondary');toggle.type='button';
  const editor=addText(parent,'div');editor.hidden=true;addText(editor,'p','選擇顏色，再點照片中對應衣服的位置。設定保存在這台手機；更換照片後請重新設定。');
  toggle.addEventListener('click',()=>{editor.hidden=!editor.hidden;});
@@ -74,15 +74,15 @@ function appendPhotoMarkEditor(parent,group){
   paint();
   img.addEventListener('click',event=>{const rect=img.getBoundingClientRect();points[select.value]={x:Math.max(0,Math.min(1,(event.clientX-rect.left)/rect.width)),y:Math.max(0,Math.min(1,(event.clientY-rect.top)/rect.height))};paint();message.textContent='已放置「'+(select.value==='—'?'單一顏色':select.value)+'」紅字，請按儲存。';});
   const save=addText(editor,'button','儲存 '+product.code+' 標記位置','secondary');save.type='button';
-  save.addEventListener('click',()=>{if(labels.some(entry=>!validPhotoPoint(points[entry.color]))){message.textContent='請先設定清單中每個顏色的位置。';return;}try{localStorage.setItem('ddu-photo-marks-v1:'+product.code,JSON.stringify({source,points}));message.textContent='位置已儲存。之後數量會自動更新；現在可按「產生叫貨圖」。';}catch{message.textContent='位置無法儲存，請確認瀏覽器儲存空間後重試。';}});
+  save.addEventListener('click',()=>{if(labels.some(entry=>!validPhotoPoint(points[entry.color]))){message.textContent='請先設定清單中每個顏色的位置。';return;}try{localStorage.setItem('ddu-photo-marks-v1:'+product.code,JSON.stringify({source,points}));message.textContent='位置已儲存。之後數量會自動更新。';onSaved();}catch{message.textContent='位置無法儲存，請確認瀏覽器儲存空間後重試。';}});
  }
  return editor;
 }
-function appendSupplierImageControls(parent,group,testOnly=false,phase='待叫貨清單'){
- const box=addText(parent,'div');const editor=appendPhotoMarkEditor(box,group);const button=addText(box,'button','產生叫貨圖','secondary');button.type='button';
+function appendSupplierImageControls(parent,group,testOnly=false,phase='待叫貨清單',auto=false){
+ const box=addText(parent,'div');const editor=appendPhotoMarkEditor(box,group,()=>{if(auto)generate();});const button=addText(box,'button','產生叫貨圖','secondary');button.type='button';
  const status=addText(box,'p',phase==='已叫貨清單'?'可產生已叫貨圖片，儲存到手機或分享至 WeChat。':'產生圖片後，儲存到手機或分享至 WeChat；傳送後再記錄已叫貨。');status.setAttribute('role','status');
  const output=addText(box,'div');let generation=0;
- button.addEventListener('click',async()=>{
+ async function generate(){
   const revision=staffRevision,current=++generation;button.disabled=true;status.textContent='正在產生叫貨圖…';
   try{
    const files=await makeSupplierImages(group,testOnly,phase);if(revision!==staffRevision||current!==generation||box.isConnected===false)return;
@@ -96,6 +96,52 @@ function appendSupplierImageControls(parent,group,testOnly=false,phase='待叫�
     share.addEventListener('click',async()=>{try{await navigator.share({files,title:group.supplier+' 叫貨圖'});status.textContent='分享視窗已關閉；請確認 WeChat 已送出，再記錄已叫貨。';}catch(error){if(error.name!=='AbortError')status.textContent='無法開啟分享，請下載或長按圖片儲存後，在 WeChat 傳送。';}});
    }
   }catch(error){editor.hidden=false;status.textContent=error.message||'叫貨圖產生失敗，請重試；仍可複製上方叫貨文字。';}
-  finally{button.disabled=false;}
- });
+  finally{if(current===generation)button.disabled=false;}
+ }
+ button.addEventListener('click',generate);
+ if(auto)generate();
 }
+
+let todayImageSignature='',refreshingTodayImages=false;
+function clearAutoTodaySupplierImages(){
+ todayImageSignature='';releaseSupplierImages(orderEl('todaySupplierImages'));
+ orderEl('todaySupplierImages').replaceChildren();orderEl('todayImageMessage').textContent='';
+}
+function todayImageGroups(orders){
+ const [start,end]=taipeiDayBounds();
+ return groupSupplierOrders(orders.filter(order=>order.created_at>=start&&order.created_at<end),false);
+}
+function renderAutoTodaySupplierImages(orders){
+ const result=todayImageGroups(orders);
+ const signature=JSON.stringify({day:taipeiDayBounds()[0],groups:result.groups.map(group=>({supplier:group.supplier,items:group.items}))});
+ if(signature===todayImageSignature)return;
+ clearAutoTodaySupplierImages();todayImageSignature=signature;
+ const output=orderEl('todaySupplierImages');
+ orderEl('todayImageMessage').textContent=result.qty?'今日待叫貨 '+result.orderCount+' 張，共 '+result.qty+' 件。已設定位置的商品會自動產圖。':'今天沒有正式待叫貨客訂。';
+ for(const group of result.groups){
+  const products=new Map();
+  for(const item of group.items){const key=item.product_code||item.product_name;if(!products.has(key))products.set(key,[]);products.get(key).push(item);}
+  for(const items of products.values()){
+   const row=addText(output,'article','','order-line');addText(row,'h4',(group.supplier||'未設定廠商')+' '+(items[0].product_code||items[0].product_name));
+   if(!group.supplier){addText(row,'p','請先補上廠商，才能產生叫貨圖。');continue;}
+   appendSupplierImageControls(row,{supplier:group.supplier,items,qty:items.reduce((sum,item)=>sum+item.qty,0)},false,'今日待叫貨',true);
+  }
+ }
+}
+async function refreshAutoTodaySupplierImages(){
+ if(refreshingTodayImages||document.hidden||orderEl('todayPanel').hidden||loadingToday||savingOrder||confirmingPurchase||receivingPurchase)return;
+ refreshingTodayImages=true;const revision=staffRevision;
+ try{
+  const client=getOrderClient(),session=await client.auth.getSession();if(session.error)throw session.error;
+  if(!session.data.session){clearAutoTodaySupplierImages();return;}
+  const [start,end]=taipeiDayBounds(),orders=[];
+  for(let offset=0;;offset+=1000){
+   const page=await client.from('ddu_customer_orders').select('id,created_at,items,status,is_test').gte('created_at',start).lt('created_at',end).eq('status','pending').eq('is_test',false).order('id').range(offset,offset+999);
+   if(revision!==staffRevision)return;if(page.error)throw page.error;orders.push(...page.data);if(page.data.length<1000)break;
+  }
+  renderAutoTodaySupplierImages(orders);
+ }catch{if(revision===staffRevision){clearAutoTodaySupplierImages();orderEl('todayImageMessage').textContent='今日數量更新失敗，圖片已收起，請重新查看今日客訂。';}}
+ finally{refreshingTodayImages=false;}
+}
+if(typeof setInterval==='function')setInterval(refreshAutoTodaySupplierImages,60000);
+if(typeof document.addEventListener==='function')document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshAutoTodaySupplierImages();});
