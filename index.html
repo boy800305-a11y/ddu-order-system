@@ -156,7 +156,7 @@
       搜尋 SHOPLINE 商品編號、商品名稱或款式。
     </p>
 
-    <button class="secondary">
+    <button class="secondary" onclick="searchProduct()">
       搜尋商品
     </button>
   </div>
@@ -183,6 +183,13 @@
 <script>
 function newOrder() {
   alert("下一步將加入 AI 客訂圖片辨識功能");
+}
+  function searchProduct() {
+  const keyword = prompt("請輸入商品編號或商品名稱");
+
+  if (keyword && keyword.trim() !== "") {
+    alert("你搜尋的是：" + keyword);
+  }
 }
 </script>
 
