@@ -83,8 +83,46 @@ orderEl('updateInventory').addEventListener('click',async()=>{
   }
   const result=await client.rpc('ddu_finish_inventory',{import_id:inventoryImportId});if(result.error)throw result.error;
   clearInventoryPreview();await refreshInventoryTime();inventoryByVariant.clear();orderEl('searchResults').replaceChildren();orderEl('searchStatus').textContent='庫存已更新，請重新搜尋商品。';
-  orderEl('inventoryMessage').textContent='三店庫存已更新：'+result.data.count+' 個規格。庫存為報表快照，建立客訂不會自動扣庫存。';
+  orderEl('inventoryMessage').textContent='三店庫存已更新：'+result.data.count+' 個規格。已刷新今日庫存 −1 待處理清單；建立客訂不會自動扣庫存。';
+  await loadTodayOrders();
  }catch(error){orderEl('inventoryMessage').textContent='尚未確認更新完成，請查看最後更新時間。原預覽已保留，可使用同一按鈕重試。'+(error.message?' '+error.message:'');}
  finally{importingInventory=false;['previewInventory','inventoryFile','staffLogout'].forEach(id=>orderEl(id).disabled=false);orderEl('confirmInventory').disabled=!inventoryPreview;orderEl('updateInventory').disabled=!inventoryPreview||!orderEl('confirmInventory').checked;}
 });
 refreshInventoryTime();
+
+async function loadNegativeInventoryOrders(){
+ const output=orderEl('negativeOrders'),message=orderEl('negativeOrderMessage'),revision=staffRevision;
+ output.replaceChildren();message.textContent='正在讀取今日報表的庫存 −1 商品…';
+ try{
+  const client=getOrderClient(),session=await client.auth.getSession();
+  if(session.error)throw session.error;
+  if(!session.data.session){message.textContent='請先登入店員帳號。';return;}
+  const [start,end]=taipeiDayBounds();
+  const latest=await client.from('ddu_inventory_imports').select('id,file_name,completed_at').eq('status','completed').gte('completed_at',start).lt('completed_at',end).order('completed_at',{ascending:false}).order('id').limit(1);
+  if(latest.error)throw latest.error;if(revision!==staffRevision)return;
+  const report=latest.data[0];
+  if(!report){message.textContent='今天尚未成功更新庫存報表。昨日庫存不列為今日待處理客訂。';return;}
+  const stock=[];
+  for(let offset=0;;offset+=1000){
+   const page=await client.from('ddu_store_inventory').select('variant_id,store_code,quantity').eq('import_id',report.id).eq('quantity',-1).order('variant_id').order('store_code').range(offset,offset+999);
+   if(page.error)throw page.error;if(revision!==staffRevision)return;
+   stock.push(...page.data);if(page.data.length<1000)break;
+  }
+  let groups=[];
+  if(stock.length){
+   const [products,variants]=await Promise.all([readFullCatalog(client,'products','id,shopline_product_id,product_name'),readFullCatalog(client,'variants','id,shopline_variant_id,shopline_product_id,variant_name')]);
+   groups=DDUInventory.negativeOrders(stock,products,variants);
+  }
+  if(revision!==staffRevision)return;
+  groups.forEach(item=>{
+   const row=addText(output,'article','','order-line');addText(row,'h3',item.name+' / '+item.style);
+   addText(row,'p','待核對 '+item.qty+' 件｜'+item.stores.map(store=>store+'：−1').join('、'));
+  });
+  if(groups.length){
+   const label=addText(output,'label','待處理商品清單（可選取複製）');label.htmlFor='negativeOrderText';
+   const text=document.createElement('textarea');text.id='negativeOrderText';text.readOnly=true;text.style.width='100%';text.style.minHeight='160px';
+   text.value='今日庫存 −1 待處理（未建立正式客訂）\n'+groups.map(item=>item.name+' / '+item.style+' × '+item.qty+'｜'+item.stores.map(s=>s+'：−1').join('、')).join('\n');output.appendChild(text);
+  }
+  message.textContent=(groups.length?groups.length+' 種規格，共 '+groups.reduce((sum,item)=>sum+item.qty,0)+' 件待核對。':'今日報表沒有庫存剛好 −1 的商品。')+' 報表更新：'+new Date(report.completed_at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'})+'｜'+report.file_name;
+ }catch{if(revision!==staffRevision)return;output.replaceChildren();message.textContent='無法讀取庫存 −1 清單，請確認店員權限及連線後重試。';}
+}

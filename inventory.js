@@ -35,6 +35,20 @@
   if(!matched.length)throw new Error('沒有可明確對應的規格，尚未更新庫存。');
   return {matched,unmatched};
  }
- root.DDUInventory={mapReport,reportStyle};
+ function negativeOrders(stock,products,variants){
+  const productMap=new Map(products.map(p=>[p.shopline_product_id,p]));
+  const variantMap=new Map(variants.map(v=>[v.shopline_variant_id,v]));
+  const groups=new Map();
+  for(const row of stock){
+   if(row.quantity!==-1||!['D1','D2','C'].includes(row.store_code))continue;
+   if(!groups.has(row.variant_id)){
+    const variant=variantMap.get(row.variant_id),product=productMap.get(variant?.shopline_product_id);
+    groups.set(row.variant_id,{variant_id:row.variant_id,name:product?.product_name||'商品資料未對應（規格 '+row.variant_id+'）',style:variant?.variant_name||'未對應規格',stores:[]});
+   }
+   const group=groups.get(row.variant_id);if(!group.stores.includes(row.store_code))group.stores.push(row.store_code);
+  }
+  return [...groups.values()].map(g=>({...g,stores:['D1','D2','C'].filter(s=>g.stores.includes(s)),qty:g.stores.length})).sort((a,b)=>a.name.localeCompare(b.name,'zh-TW')||a.style.localeCompare(b.style,'zh-TW'));
+ }
+ root.DDUInventory={mapReport,reportStyle,negativeOrders};
  if(typeof module!=='undefined')module.exports=root.DDUInventory;
 })(typeof window==='undefined'?globalThis:window);
