@@ -11,7 +11,7 @@ function appendProductPhoto(parent,product,compact=false){
  return photo;
 }
 function appendOrderProduct(parent,item,text){
- const row=addText(parent,'div');row.style.display='flex';row.style.alignItems='center';row.style.gap='12px';row.style.margin='12px 0';
+ const row=addText(parent,'div');row.style.display='flex';row.style.alignItems='flex-start';row.style.gap='12px';row.style.margin='12px 0';
  const photoBox=addText(row,'div');photoBox.hidden=true;
  const showPhoto=product=>{if(appendProductPhoto(photoBox,product,true))photoBox.hidden=false;};
  if(item.product_code)showPhoto(item);
@@ -22,7 +22,7 @@ function appendOrderProduct(parent,item,text){
  const description=addText(row,'div');description.style.minWidth='0';
  const name=addText(description,'p',text);name.style.margin='0 0 6px';
  const supplier=String(item.supplier_code||'').trim();
- const label=addText(description,'p','廠商代號：'+(supplier||(Object.prototype.hasOwnProperty.call(item,'supplier_code')?'未設定':'待確認')));
+ const label=addText(description,'p',(supplier||(Object.prototype.hasOwnProperty.call(item,'supplier_code')?'未設定':'待確認')));
  label.style.margin='0';label.style.fontWeight='600';label.style.fontSize='14px';
  return row;
 }
