@@ -130,6 +130,9 @@
     #receiptMessage { margin-top:12px; overflow-wrap:anywhere; }
   #orderSearchForm label { display:block; margin-top:14px; font-size:14px; }
 #orderSearchForm input:not([type="checkbox"]), #orderSearchForm select { width:100%; padding:12px; margin-top:8px; border:1px solid #ddd; border-radius:10px; font:inherit; }
+.inline-search { margin-top:18px; padding-top:16px; border-top:1px solid #eee; }
+#orderPanel { margin-top:14px; }
+#orderPanel h2 { font-size:17px; }
 </style>
 </head>
 
@@ -161,9 +164,36 @@
       先搜尋商品並選擇規格，即可建立客訂。
     </p>
 
-    <button class="primary" onclick="newOrder()">
+    <button class="primary" id="newOrderButton" aria-expanded="false" aria-controls="orderPanel" onclick="newOrder()">
       ＋ 新增客訂
     </button>
+  <section id="orderPanel" hidden aria-label="新增客訂表單">
+
+      <label for="orderCustomer">客訂代號</label><input id="orderCustomer" form="customerOrderForm" maxlength="80" placeholder="例如：LINE 暱稱或客訂編號" required>
+  <section class="inline-search" aria-label="商品搜尋">
+    <h2>🔎 商品搜尋</h2>
+    <p>
+      搜尋 SHOPLINE 商品編號、商品名稱或款式。
+    </p>
+
+<form id="productSearchForm">
+      <label class="search-label" for="productKeyword">商品編號或商品名稱</label>
+      <input id="productKeyword" type="search" placeholder="例如：2901 或商品名稱" maxlength="120" autocomplete="off">
+      <button id="searchButton" class="secondary" type="submit">搜尋商品</button>
+    </form>
+    <p id="searchStatus" class="search-status" role="status" aria-live="polite"></p>
+    <div id="searchResults" aria-busy="false"></div>
+  </section>
+    <form id="customerOrderForm">
+
+      <div id="orderCart"></div><p id="orderTotal"></p>
+      <label for="orderNote">備註（選填）</label><textarea id="orderNote" maxlength="1000" rows="3"></textarea>
+      <label class="test-label"><input type="checkbox" id="orderTest">這是測試客訂（不計入叫貨統計）</label>
+      <button class="primary" id="saveOrder" type="submit">儲存客訂</button>
+    </form>
+
+  </section>
+    <p id="orderMessage" class="search-status" role="status" aria-live="polite"></p>
   </div>
 
   <div class="card">
@@ -193,20 +223,7 @@
     </button>
   </div>
 
-  <div class="card">
-    <h2>🔎 商品搜尋</h2>
-    <p>
-      搜尋 SHOPLINE 商品編號、商品名稱或款式。
-    </p>
 
-<form id="productSearchForm">
-      <label class="search-label" for="productKeyword">商品編號或商品名稱</label>
-      <input id="productKeyword" type="search" placeholder="例如：2901 或商品名稱" maxlength="120" autocomplete="off">
-      <button id="searchButton" class="secondary" type="submit">搜尋商品</button>
-    </form>
-    <p id="searchStatus" class="search-status" role="status" aria-live="polite"></p>
-    <div id="searchResults" aria-busy="false"></div>
-  </div>
 
   <div class="card">
     <h2>📦 訂單狀態</h2>
@@ -222,17 +239,7 @@
   </div>
 
 
-  <section class="card" id="orderPanel" hidden aria-label="新增客訂表單">
-    <h2>📝 新增客訂</h2>
-    <form id="customerOrderForm">
-      <label for="orderCustomer">客訂代號</label><input id="orderCustomer" maxlength="80" placeholder="例如：LINE 暱稱或客訂編號" required>
-      <div id="orderCart"></div><p id="orderTotal"></p>
-      <label for="orderNote">備註（選填）</label><textarea id="orderNote" maxlength="1000" rows="3"></textarea>
-      <label class="test-label"><input type="checkbox" id="orderTest">這是測試客訂（不計入叫貨統計）</label>
-      <button class="primary" id="saveOrder" type="submit">儲存客訂</button>
-    </form>
-    <p id="orderMessage" class="search-status" role="status" aria-live="polite"></p>
-  </section>
+
   <section class="card" id="todayPanel" hidden aria-label="今日客訂清單">
     <h2>📋 今日客訂清單</h2>
     <p id="todayMessage" role="status" aria-live="polite"></p>
@@ -431,11 +438,18 @@ function openStaffPanel() {
   orderEl('staffPanel').scrollIntoView({behavior:'smooth',block:'start'});
   orderEl('staffEmail').focus({preventScroll:true});
 }
-function openOrderPanel() {
-  orderEl('orderPanel').hidden = false;
-  orderEl('orderPanel').scrollIntoView({behavior:'smooth',block:'start'});
+function setOrderPanelOpen(open) {
+  orderEl('orderPanel').hidden=!open;
+  orderEl('newOrderButton').setAttribute('aria-expanded',String(open));
+  orderEl('newOrderButton').textContent=open?'收起客訂表單':'＋ 新增客訂';
 }
-function newOrder() { openOrderPanel(); }
+function openOrderPanel() { setOrderPanelOpen(true); }
+function newOrder() {
+  if(savingOrder||confirmingPurchase||receivingPurchase)return;
+  const open=orderEl('orderPanel').hidden;
+  if(open)orderMessage('');
+  setOrderPanelOpen(open);
+}
 function addOrderItem(product, variant) {
   if (!variant.shopline_variant_id) { orderMessage('此規格缺少商品識別碼，無法加入客訂。'); return; }
   const existing = orderCart.find(item => item.variant_id === variant.shopline_variant_id);
@@ -451,7 +465,7 @@ function addOrderItem(product, variant) {
 }
 function renderOrderCart() {
   const list = orderEl('orderCart'); list.replaceChildren();
-  if (!orderCart.length) addText(list,'p','尚未加入商品。請到商品搜尋，按規格下方的「加入客訂」。');
+  if (!orderCart.length) addText(list,'p','尚未加入商品。請在上方搜尋商品，按規格下方的「加入客訂」。');
   orderCart.forEach((item,index) => {
     const row = addText(list,'div','', 'order-line');
     addText(row,'strong',item.product_name || item.product_code || '商品');
@@ -522,7 +536,7 @@ async function saveCustomerOrder(event) {
       requested_items:orderCart.map(item=>({variant_id:item.variant_id,qty:item.qty})),test_order:orderEl('orderTest').checked});
     if(result.error) throw result.error;
     orderCart=[]; pendingOrderId=null; orderEl('orderCustomer').value=''; orderEl('orderNote').value=''; orderEl('orderTest').checked=false;
-    clearSupplierList(); orderMessage('客訂已儲存，狀態為「待叫貨」。'); await loadTodayOrders();
+    clearSupplierList(); setOrderPanelOpen(false); orderMessage('客訂已儲存，狀態為「待叫貨」。'); await loadTodayOrders();
   } catch(error) { orderMessage('尚未確認儲存成功，清單已保留。請確認店員權限及連線後再試。'); }
   finally { savingOrder=false; orderEl('saveOrder').disabled=false; orderEl('orderTest').disabled=false; orderEl('orderCustomer').disabled=false; orderEl('orderNote').disabled=false; renderOrderCart(); }
 }
