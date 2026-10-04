@@ -391,6 +391,12 @@ function renderOrderCart() {
     const label = addText(row,'label','數量'); label.htmlFor = 'orderQty' + index;
     const input = document.createElement('input'); input.id=label.htmlFor; input.type='number'; input.min='1'; input.max='999'; input.step='1'; input.value=item.qty;
     input.disabled=savingOrder;
+    input.addEventListener('input',()=> {
+      const value=Number(input.value);
+      if(Number.isInteger(value)&&value>=1&&value<=999) {
+        item.qty=value; pendingOrderId=null; orderEl('orderTotal').textContent='共 '+orderCart.length+' 種規格、'+orderCart.reduce((sum,item)=>sum+item.qty,0)+' 件';
+      }
+    });
     input.addEventListener('change',()=> {
       const value=Number(input.value);
       if (!Number.isInteger(value) || value<1 || value>999) { input.value=item.qty; orderMessage('數量請填 1 到 999 的整數。'); return; }
