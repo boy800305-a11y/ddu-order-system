@@ -1,12 +1,25 @@
 // 商品照以商品編號對應；保留原始照片。
 const productPhotos={'2901':'2901.jpeg'};
-function appendProductPhoto(parent,product){
+function appendProductPhoto(parent,product,compact=false){
  const source=productPhotos[String(product?.product_code||'').trim()];
- if(!source)return;
+ if(!source)return null;
  const photo=addText(parent,'img');photo.src=source;
  photo.alt=(product.product_code||'')+' '+(product.product_name||'商品')+' 商品照片';
  photo.style.width='100%';photo.style.maxWidth='420px';photo.style.height='auto';photo.style.display='block';photo.style.margin='12px 0';
+ if(compact){photo.style.width='96px';photo.style.height='96px';photo.style.objectFit='contain';photo.style.flexShrink='0';photo.style.margin='0';photo.style.borderRadius='6px';photo.style.background='#fff';}
  photo.addEventListener('error',()=>{photo.remove();addText(parent,'p','商品照片暫時無法載入，請重新整理。');},{once:true});
+ return photo;
+}
+function appendOrderProduct(parent,item,text){
+ const row=addText(parent,'div');row.style.display='flex';row.style.alignItems='center';row.style.gap='12px';row.style.margin='12px 0';
+ const photoBox=addText(row,'div');photoBox.hidden=true;
+ const showPhoto=product=>{if(appendProductPhoto(photoBox,product,true))photoBox.hidden=false;};
+ if(item.product_code)showPhoto(item);
+ else if(item.variant_id){
+  const revision=staffRevision;
+  getTodayStockCatalog().then(catalog=>{if(revision!==staffRevision)return;const product=catalog.products.get(catalog.byVariant.get(item.variant_id)?.shopline_product_id);if(product)showPhoto(product);}).catch(()=>{});
+ }
+ addText(row,'p',text);return row;
 }
 
 // Customer orders are processed together. POS inventory remains separate for D1, D2 and C.
@@ -124,7 +137,7 @@ async function loadNegativeInventoryOrders(){
   if(revision!==staffRevision)return;
   groups.forEach(item=>{
    const row=addText(output,'article','','order-line');addText(row,'h3',item.name+' / '+item.style);
-   addText(row,'p','待核對 '+item.qty+' 件｜'+item.stores.map(store=>store+'：−1').join('、'));
+   appendOrderProduct(row,item,'待核對 '+item.qty+' 件｜'+item.stores.map(store=>store+'：−1').join('、'));
    appendTodayProductStock(row,[item]);
   });
   if(groups.length){
@@ -181,7 +194,7 @@ async function appendTodayProductStock(parent,items){
    const {variants,stock}=data[index];
    const product=catalog.products.get(id);
    addText(content,'p',(product?.product_code?product.product_code+' ':'')+(product?.product_name||'商品'));
-   appendProductPhoto(content,product);
+
    const table=addText(content,'table');table.style.width='100%';table.style.fontSize='13px';table.style.borderCollapse='collapse';
    const heading=addText(table,'tr');['顏色','尺寸','D1','D2','C','客訂規格'].forEach(label=>{const cell=addText(heading,'th',label);cell.scope='col';cell.style.padding='8px 4px';});
    variants.forEach(v=>{

@@ -498,7 +498,7 @@ function renderOrderCart() {
   if (!orderCart.length) addText(list,'p','尚未加入商品。請在上方搜尋商品，按規格下方的「加入客訂」。');
   orderCart.forEach((item,index) => {
     const row = addText(list,'div','', 'order-line');
-    addText(row,'strong',item.product_name || item.product_code || '商品');
+    appendOrderProduct(row,item,item.product_name || item.product_code || '商品');
     addText(row,'p',item.variant_name || [item.color,item.size].filter(Boolean).join(' / ') || '商品規格');
     const label = addText(row,'label','數量'); label.htmlFor = 'orderQty' + index;
     const input = document.createElement('input'); input.id=label.htmlFor; input.type='number'; input.min='1'; input.max='999'; input.step='1'; input.value=item.qty;
@@ -605,7 +605,7 @@ async function loadTodayOrders() {
       const row=addText(output,'article','','order-line');
       addText(row,'h3',(order.is_test?'【測試】':'')+order.customer_ref);
       addText(row,'p',(orderStatuses[order.status]||order.status)+' · '+new Date(order.created_at).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour:'2-digit',minute:'2-digit'}));
-      (order.items||[]).forEach(item=>addText(row,'p',(item.product_name||item.product_code)+' / '+(item.variant_name||'規格')+' × '+item.qty+(item.ordered_qty?'（已叫貨 '+item.ordered_qty+' 件／已到貨 '+(item.received_qty||0)+' 件）':'')));
+      (order.items||[]).forEach(item=>appendOrderProduct(row,item,(item.product_name||item.product_code)+' / '+(item.variant_name||'規格')+' × '+item.qty+(item.ordered_qty?'（已叫貨 '+item.ordered_qty+' 件／已到貨 '+(item.received_qty||0)+' 件）':'')));
       if(order.note) addText(row,'p','備註：'+order.note); fulfillmentDates(row,order); appendAmendActions(row,order);
       appendTodayProductStock(row,order.items||[]);
     });
@@ -677,7 +677,7 @@ async function loadSupplierOrders() {
       const name=group.supplier?'廠商 '+group.supplier:'未設定廠商（請先補齊商品資料）';
       addText(row,'h3',name);
       addText(row,'p',group.items.length+' 種規格，共 '+group.qty+' 件');
-      group.items.forEach(item=>addText(row,'p',supplierItemText(item)));
+      group.items.forEach(item=>appendOrderProduct(row,item,supplierItemText(item)));
       if(group.supplier) {
         const label=addText(row,'label','叫貨文字（可選取複製）'); label.htmlFor='supplierText'+index;
         const text=document.createElement('textarea'); text.id=label.htmlFor; text.readOnly=true; text.rows=Math.min(12,group.items.length+2);
@@ -884,7 +884,7 @@ async function loadFulfillment(internal=false) {
   for(const order of data) {
    const row=addText(orderEl('fulfillmentOrders'),'article','','order-line');
    addText(row,'h3',(order.is_test?'【測試】':'')+order.customer_ref);addText(row,'p',orderStatuses[order.status]);
-   order.items.forEach(item=>addText(row,'p',(item.product_name||item.product_code)+' / '+(item.variant_name||'規格')+' × '+item.qty));fulfillmentDates(row,order);
+   order.items.forEach(item=>appendOrderProduct(row,item,(item.product_name||item.product_code)+' / '+(item.variant_name||'規格')+' × '+item.qty));fulfillmentDates(row,order);
    if(order.status==='collected')continue;
    const next=order.status==='arrived'?'notified':'collected',label=next==='notified'?'記錄已通知':'記錄已取貨';
    const form=document.createElement('form'); form.className='fulfillment-form';row.appendChild(form);
@@ -951,7 +951,7 @@ async function searchCustomerOrders(event) {
   for(const order of matches.slice(0,100)){
    const row=addText(output,'article','','order-line');addText(row,'h3',(order.is_test?'【測試】':'')+order.customer_ref);
    addText(row,'p',(orderStatuses[order.status]||order.status)+' · 建立日期：'+new Date(order.created_at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}));
-   order.items.forEach(item=>addText(row,'p',(item.product_code||'')+' '+(item.product_name||'商品')+' / '+(item.variant_name||'規格')+' × '+item.qty+(item.ordered_qty?'（已叫貨 '+item.ordered_qty+' 件／已到貨 '+(item.received_qty||0)+' 件）':'')));
+   order.items.forEach(item=>appendOrderProduct(row,item,(item.product_code||'')+' '+(item.product_name||'商品')+' / '+(item.variant_name||'規格')+' × '+item.qty+(item.ordered_qty?'（已叫貨 '+item.ordered_qty+' 件／已到貨 '+(item.received_qty||0)+' 件）':'')));
    if(order.note)addText(row,'p','備註：'+order.note);fulfillmentDates(row,order);appendAmendActions(row,order);
   }
   orderEl('orderSearchMessage').textContent=(testOnly?'【測試客訂】':'【正式客訂】')+(matches.length>100||!complete?'顯示最新 100 張符合客訂，請縮小查詢條件。':matches.length?'找到 '+matches.length+' 張客訂。':'沒有符合條件的客訂。');
@@ -994,6 +994,6 @@ renderOrderCart(); updateStaffUI();
 </script>
 <script src="xlsx.full.min.js"></script>
 <script src="inventory.js?v=20261004-stock-options-2"></script>
-<script src="store-ui.js?v=20261005-photo-2901"></script>
+<script src="store-ui.js?v=20261005-order-photos"></script>
 </body>
 </html>
