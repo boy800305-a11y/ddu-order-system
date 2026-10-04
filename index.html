@@ -249,6 +249,17 @@
     <div id="purchaseRecords"></div>
   </section>
 
+  <section class="card" id="fulfillmentPanel" aria-label="到貨通知與取貨">
+    <h2>🔔 到貨通知與取貨</h2>
+    <p>查看所有日期的到貨客訂。完成通知或交付商品後，再記錄狀態與日期。</p>
+    <label class="supplier-mode"><input type="checkbox" id="fulfillmentTestOnly"> 僅查看測試客訂</label>
+    <label class="supplier-mode"><input type="checkbox" id="fulfillmentShowCollected"> 包含已取貨客訂</label>
+    <button class="secondary" id="fulfillmentButton" type="button">查看到貨客訂</button>
+    <p id="fulfillmentMessage" role="status" aria-live="polite"></p>
+    <p id="fulfillmentActionMessage" role="status" aria-live="polite"></p>
+    <div id="fulfillmentOrders"></div>
+  </section>
+
   <div class="bottom">
     DDU Order System v1.0
   </div>
@@ -461,7 +472,7 @@ orderEl('staffLoginForm').addEventListener('submit',async event=> {
 });
 orderEl('staffLogout').addEventListener('click',async()=> {
   if(savingOrder||confirmingPurchase||receivingPurchase) return;
-  staffRevision++; clearSupplierList('已登出，叫貨清單已收起。'); clearPurchaseRecords(); orderEl('receiptMessage').textContent='';
+  staffRevision++; clearFulfillment('已登出，客訂資料已收起。'); orderEl('fulfillmentActionMessage').textContent=''; clearSupplierList('已登出，叫貨清單已收起。'); clearPurchaseRecords(); orderEl('receiptMessage').textContent='';
   try { const {error}=await getOrderClient().auth.signOut(); if(error) throw error;
     orderEl('todayOrders').replaceChildren(); orderEl('todayMessage').textContent='已登出，客訂資料已收起。';
     orderEl('orderCustomer').value=''; orderEl('orderNote').value=''; orderCart=[]; pendingOrderId=null; renderOrderCart();
@@ -507,7 +518,7 @@ async function loadTodayOrders() {
     const [start,end]=taipeiDayBounds();
     const data=[];
     for(let offset=0;;offset+=1000) {
-      const page=await client.from('ddu_customer_orders').select('id,created_at,customer_ref,note,items,status,is_test')
+      const page=await client.from('ddu_customer_orders').select('id,created_at,customer_ref,note,items,status,is_test,notified_at,collected_at')
         .gte('created_at',start).lt('created_at',end).order('created_at',{ascending:false}).order('id').range(offset,offset+999);
       if(revision!==staffRevision) return;
       if(page.error) throw page.error; data.push(...page.data); if(page.data.length<1000) break;
@@ -517,7 +528,7 @@ async function loadTodayOrders() {
       addText(row,'h3',(order.is_test?'【測試】':'')+order.customer_ref);
       addText(row,'p',(orderStatuses[order.status]||order.status)+' · '+new Date(order.created_at).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour:'2-digit',minute:'2-digit'}));
       (order.items||[]).forEach(item=>addText(row,'p',(item.product_name||item.product_code)+' / '+(item.variant_name||'規格')+' × '+item.qty+(item.ordered_qty?'（已叫貨 '+item.ordered_qty+' 件／已到貨 '+(item.received_qty||0)+' 件）':'')));
-      if(order.note) addText(row,'p','備註：'+order.note);
+      if(order.note) addText(row,'p','備註：'+order.note); fulfillmentDates(row,order);
     });
     orderEl('todayMessage').textContent=data.length?'今日 '+data.length+' 張客訂'+(data.length>100?'，顯示最新 100 張。':'。'):'今天尚無客訂。';
     ['pending','ordered','shortage'].forEach(status=>{
@@ -528,7 +539,6 @@ async function loadTodayOrders() {
 }
 orderEl('todayButton').addEventListener('click',loadTodayOrders);
 renderOrderCart(); updateStaffUI();
-
 // Aggregate saved item snapshots without exposing the public supplier catalog.
 let loadingSuppliers=false, staffRevision=0, confirmingPurchase=false;
 function groupSupplierOrders(orders, testOnly=false) {
@@ -681,7 +691,6 @@ orderEl('purchaseButton').addEventListener('click',()=>loadPurchaseRecords());
 orderEl('purchaseTestOnly').addEventListener('change',()=>clearPurchaseRecords('模式已變更，請重新查看紀錄。'));
 
 orderEl('purchaseShowArrived').addEventListener('change',()=>clearPurchaseRecords('顯示範圍已變更，請重新查看紀錄。'));
-
 let receivingPurchase=false;
 function receiptLines(inputs) {
   const lines=[];
@@ -769,7 +778,60 @@ async function loadReceiptHistory(batchId,output,button) {
   } catch(error) {if(revision===staffRevision) {output.replaceChildren(); addText(output,'p','無法讀取到貨歷程，請稍後再試。');}}
   finally {button.disabled=false;}
 }
-
+let loadingFulfillment=false;
+function clearFulfillment(message='請重新查看到貨客訂。') {
+ orderEl('fulfillmentOrders').replaceChildren(); orderEl('fulfillmentMessage').textContent=message;
+}
+function fulfillmentDates(row,order) {
+ for(const [key,label] of [['notified_at','通知日期'],['collected_at','取貨日期']]) if(order[key]) addText(row,'p',label+'：'+new Date(order[key]).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}));
+}
+async function loadFulfillment(internal=false) {
+ if(loadingFulfillment||(receivingPurchase&&!internal)||confirmingPurchase||savingOrder) return;
+ loadingFulfillment=true; const revision=staffRevision, testOnly=orderEl('fulfillmentTestOnly').checked;
+ ['fulfillmentButton','fulfillmentTestOnly','fulfillmentShowCollected'].forEach(id=>orderEl(id).disabled=true);
+ clearFulfillment('正在讀取到貨客訂…');
+ try {
+  const client=getOrderClient(),session=await client.auth.getSession(); if(session.error||!session.data.session) {clearFulfillment('請先登入店員帳號。');openOrderPanel();return;}
+  const data=[],statuses=orderEl('fulfillmentShowCollected').checked?['arrived','notified','collected']:['arrived','notified'];
+  for(let offset=0;;offset+=1000) {
+   const page=await client.from('ddu_customer_orders').select('id,created_at,customer_ref,items,status,is_test,notified_at,collected_at').eq('is_test',testOnly).in('status',statuses).order('created_at').order('id').range(offset,offset+999);
+   if(revision!==staffRevision)return; if(page.error)throw page.error;data.push(...page.data);if(page.data.length<1000)break;
+  }
+  clearFulfillment((testOnly?'【測試】':'')+'共 '+data.length+' 張到貨客訂。');
+  for(const order of data) {
+   const row=addText(orderEl('fulfillmentOrders'),'article','','order-line');
+   addText(row,'h3',(order.is_test?'【測試】':'')+order.customer_ref);addText(row,'p',orderStatuses[order.status]);
+   order.items.forEach(item=>addText(row,'p',(item.product_name||item.product_code)+' / '+(item.variant_name||'規格')+' × '+item.qty));fulfillmentDates(row,order);
+   if(order.status==='collected')continue;
+   const next=order.status==='arrived'?'notified':'collected',label=next==='notified'?'記錄已通知':'記錄已取貨';
+   const form=document.createElement('form'); form.className='fulfillment-form';row.appendChild(form);
+   const agreeLabel=addText(form,'label','','test-label'),agree=document.createElement('input');agree.type='checkbox';agree.required=true;agreeLabel.appendChild(agree);
+   addText(agreeLabel,'span',(order.is_test?'【測試】':'')+(next==='notified'?'我已完成通知這位客人':'已核對客訂，客人已領取全部商品'));
+   const button=addText(form,'button',label,'primary');button.type='submit';button.disabled=true;
+   agree.addEventListener('change',()=>button.disabled=!agree.checked||receivingPurchase);
+   form.addEventListener('submit',async event=>{event.preventDefault();if(agree.checked)await completeCustomerOrder(order,next);});
+  }
+ }catch(error){if(revision===staffRevision)clearFulfillment('無法讀取到貨客訂，請稍後再試。');}
+ finally{loadingFulfillment=false;['fulfillmentButton','fulfillmentTestOnly','fulfillmentShowCollected'].forEach(id=>orderEl(id).disabled=receivingPurchase);}
+}
+async function completeCustomerOrder(order,next) {
+ if(receivingPurchase||confirmingPurchase||savingOrder)return;
+ const revision=staffRevision;setReceiptBusy(true);
+ document.querySelectorAll('.fulfillment-form input,.fulfillment-form button').forEach(el=>el.disabled=true);
+ ['fulfillmentButton','fulfillmentTestOnly','fulfillmentShowCollected'].forEach(id=>orderEl(id).disabled=true);
+ orderEl('fulfillmentActionMessage').textContent='正在儲存狀態…';
+ try {
+  const client=getOrderClient(),session=await client.auth.getSession();if(session.error||!session.data.session)throw new Error('Login required');
+  const result=await client.rpc('ddu_complete_customer_order',{customer_order_id:order.id,target_status:next,expected_status:order.status});if(result.error)throw result.error;
+  if(revision!==staffRevision)return;
+  if(next==='collected')orderEl('fulfillmentShowCollected').checked=true;
+  orderEl('fulfillmentActionMessage').textContent=(order.is_test?'【測試】':'')+order.customer_ref+' 已記錄為「'+orderStatuses[next]+'」。';
+  await loadFulfillment(true);await loadTodayOrders();
+ }catch(error){if(revision===staffRevision){if(error.code==='P0001')clearFulfillment('客訂狀態已變動，請重新查看。');orderEl('fulfillmentActionMessage').textContent='尚未確認儲存成功，請重新查看客訂後再試。';}}
+ finally{setReceiptBusy(false);['fulfillmentButton','fulfillmentTestOnly','fulfillmentShowCollected'].forEach(id=>orderEl(id).disabled=false);document.querySelectorAll('.fulfillment-form input').forEach(el=>el.disabled=false);document.querySelectorAll('.fulfillment-form button').forEach(el=>el.disabled=!el.closest('form').querySelector('input').checked);}
+}
+orderEl('fulfillmentButton').addEventListener('click',()=>loadFulfillment());
+['fulfillmentTestOnly','fulfillmentShowCollected'].forEach(id=>orderEl(id).addEventListener('change',()=>{clearFulfillment('模式已變更，請重新查看。');orderEl('fulfillmentActionMessage').textContent='';}));
 </script>
 </body>
 </html>
