@@ -111,6 +111,13 @@
     .product-result h3 { margin: 0 0 8px; font-size: 17px; }
     .variant-list { list-style: none; padding: 0; margin: 10px 0 0; }
     .variant-list li { background: #f5f6f8; border-radius: 10px; padding: 12px; margin-top: 8px; font-size: 14px; line-height: 1.6; }
+    [hidden] { display: none !important; }
+    #orderPanel label { display:block; margin-top:14px; font-size:14px; }
+    #orderPanel input:not([type="checkbox"]), #orderPanel textarea { width:100%; padding:12px; margin-top:8px; border:1px solid #ddd; border-radius:10px; font:inherit; font-size:16px; }
+    #orderPanel .test-label { display:flex; align-items:center; gap:8px; }
+    .order-line { margin-top:14px; padding:12px; background:#f5f6f8; border-radius:10px; overflow-wrap:anywhere; }
+    .order-line h3 { margin:0 0 8px; font-size:17px; }
+    #orderTotal, #orderMessage { margin-top:12px; }
   </style>
 </head>
 
@@ -126,7 +133,7 @@
   <div class="card">
     <h2>📷 新增客訂</h2>
     <p>
-      上傳客訂截圖，系統將辨識商品、顏色、尺寸及廠商。
+      先搜尋商品並選擇規格，即可建立客訂。
     </p>
 
     <button class="primary" onclick="newOrder()">
@@ -139,12 +146,12 @@
     <p>查看今天尚未處理的客訂商品。</p>
 
     <div class="status">
-      <span class="tag">待叫貨 0</span>
-      <span class="tag">已叫貨 0</span>
-      <span class="tag">缺貨 0</span>
+      <span class="tag" id="countpending">待叫貨 0</span>
+      <span class="tag" id="countordered">已叫貨 0</span>
+      <span class="tag" id="countshortage">缺貨 0</span>
     </div>
 
-    <button class="secondary">
+    <button class="secondary" id="todayButton">
       查看今日客訂
     </button>
   </div>
@@ -188,19 +195,42 @@
     </div>
   </div>
 
+
+  <section class="card" id="orderPanel" hidden aria-label="新增客訂表單">
+    <h2>📝 新增客訂</h2>
+    <p id="staffState" role="status">儲存與查看客訂需要店員登入。</p>
+    <form id="staffLoginForm">
+      <label for="staffEmail">店員電子信箱</label><input id="staffEmail" type="email" autocomplete="username" required>
+      <label for="staffPassword">密碼</label><input id="staffPassword" type="password" autocomplete="current-password" required>
+      <button class="secondary" id="staffLoginButton" type="submit">店員登入</button>
+    </form>
+    <button class="secondary" id="staffLogout" type="button" hidden>登出店員帳號</button>
+    <form id="customerOrderForm">
+      <label for="orderCustomer">客訂代號</label><input id="orderCustomer" maxlength="80" placeholder="例如：LINE 暱稱或客訂編號" required>
+      <div id="orderCart"></div><p id="orderTotal"></p>
+      <label for="orderNote">備註（選填）</label><textarea id="orderNote" maxlength="1000" rows="3"></textarea>
+      <label class="test-label"><input type="checkbox" id="orderTest">這是測試客訂（不計入叫貨統計）</label>
+      <button class="primary" id="saveOrder" type="submit">儲存客訂</button>
+    </form>
+    <p id="orderMessage" class="search-status" role="status" aria-live="polite"></p>
+  </section>
+  <section class="card" id="todayPanel" hidden aria-label="今日客訂清單">
+    <h2>📋 今日客訂清單</h2>
+    <p id="todayMessage" role="status" aria-live="polite"></p>
+    <div id="todayOrders"></div>
+  </section>
+
   <div class="bottom">
     DDU Order System v1.0
   </div>
 
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
 const SUPABASE_URL = "https://noytmythygijgigksyry.supabase.co";
 const SUPABASE_PUBLIC_KEY = "sb_publishable_4lbToArTpsA69mjtIE6-Sw_15C5kMid";
 
-function newOrder() {
-  alert("下一步將加入 AI 客訂圖片辨識功能");
-}
 
 // Quote PostgREST values so punctuation cannot change the filter structure.
 function filterValue(value) {
@@ -267,6 +297,9 @@ function renderProduct(product, variants) {
     addText(item, 'strong', variant.variant_name || '商品規格');
     addText(item, 'div', '顏色：' + (variant.color || '未填寫') + ' ｜ 尺寸：' + (variant.size || '未填寫'));
     if (variant.variant_sku) addText(item, 'div', '規格編號：' + variant.variant_sku);
+    const choose = addText(item, 'button', '加入客訂 · ' + (variant.variant_name || '商品規格'), 'secondary');
+    choose.type = 'button';
+    choose.addEventListener('click', () => { if (!savingOrder) addOrderItem(product, variant); });
     list.appendChild(item);
   }
   article.appendChild(list);
@@ -324,5 +357,140 @@ document.getElementById('productSearchForm').addEventListener('submit', function
 });
 </script>
 
+<script>
+// Private orders use the signed-in user's token; public catalog search remains anonymous.
+let orderClient = null, orderCart = [], pendingOrderId = null, savingOrder = false;
+const orderStatuses = {pending:'待叫貨', ordered:'已叫貨', arrived:'到貨', shortage:'缺貨', notified:'已通知', collected:'已取貨', cancelled:'已取消'};
+const orderEl = id => document.getElementById(id);
+function orderMessage(text) { orderEl('orderMessage').textContent = text; }
+function openOrderPanel() {
+  orderEl('orderPanel').hidden = false;
+  orderEl('orderPanel').scrollIntoView({behavior:'smooth',block:'start'});
+}
+function newOrder() { openOrderPanel(); }
+function addOrderItem(product, variant) {
+  if (!variant.shopline_variant_id) { orderMessage('此規格缺少商品識別碼，無法加入客訂。'); return; }
+  const existing = orderCart.find(item => item.variant_id === variant.shopline_variant_id);
+  if (existing && existing.qty >= 999) { orderMessage('單一規格數量最多 999 件。'); return; }
+  if (existing) existing.qty++;
+  else {
+    if (orderCart.length >= 100) { orderMessage('單張客訂最多加入 100 種規格。'); return; }
+    orderCart.push({variant_id:variant.shopline_variant_id, product_name:product.product_name, product_code:product.product_code,
+      variant_name:variant.variant_name, color:variant.color, size:variant.size, qty:1});
+  }
+  pendingOrderId = null;
+  renderOrderCart(); openOrderPanel(); orderMessage('已加入規格，請確認數量與客訂代號。');
+}
+function renderOrderCart() {
+  const list = orderEl('orderCart'); list.replaceChildren();
+  if (!orderCart.length) addText(list,'p','尚未加入商品。請到商品搜尋，按規格下方的「加入客訂」。');
+  orderCart.forEach((item,index) => {
+    const row = addText(list,'div','', 'order-line');
+    addText(row,'strong',item.product_name || item.product_code || '商品');
+    addText(row,'p',item.variant_name || [item.color,item.size].filter(Boolean).join(' / ') || '商品規格');
+    const label = addText(row,'label','數量'); label.htmlFor = 'orderQty' + index;
+    const input = document.createElement('input'); input.id=label.htmlFor; input.type='number'; input.min='1'; input.max='999'; input.step='1'; input.value=item.qty;
+    input.disabled=savingOrder;
+    input.addEventListener('change',()=> {
+      const value=Number(input.value);
+      if (!Number.isInteger(value) || value<1 || value>999) { input.value=item.qty; orderMessage('數量請填 1 到 999 的整數。'); return; }
+      item.qty=value; pendingOrderId=null; orderEl('orderTotal').textContent='共 '+orderCart.length+' 種規格、'+orderCart.reduce((sum,item)=>sum+item.qty,0)+' 件';
+    }); row.appendChild(input);
+    const remove = addText(row,'button','移除此規格','secondary'); remove.type='button'; remove.disabled=savingOrder;
+    remove.addEventListener('click',()=>{ orderCart.splice(index,1); pendingOrderId=null; renderOrderCart(); });
+  });
+  orderEl('orderTotal').textContent='共 '+orderCart.length+' 種規格、'+orderCart.reduce((sum,item)=>sum+item.qty,0)+' 件';
+}
+function getOrderClient() {
+  if (!orderClient) {
+    if (!window.supabase) throw new Error('登入元件無法載入，請重新整理後再試。');
+    orderClient=window.supabase.createClient(SUPABASE_URL,SUPABASE_PUBLIC_KEY,{auth:{persistSession:false,detectSessionInUrl:false}});
+  }
+  return orderClient;
+}
+async function updateStaffUI() {
+  try {
+    const {data,error}=await getOrderClient().auth.getSession(); if (error) throw error;
+    const signedIn=!!data.session;
+    orderEl('staffLoginForm').hidden=signedIn; orderEl('staffLogout').hidden=!signedIn;
+    orderEl('staffState').textContent=signedIn?'店員已登入：'+data.session.user.email:'儲存與查看客訂需要店員登入。';
+  } catch(error) { orderEl('staffState').textContent=error.message; }
+}
+orderEl('staffLoginForm').addEventListener('submit',async event=> {
+  event.preventDefault(); const button=orderEl('staffLoginButton'); button.disabled=true;
+  try {
+    const {error}=await getOrderClient().auth.signInWithPassword({email:orderEl('staffEmail').value.trim(),password:orderEl('staffPassword').value});
+    if(error) { orderMessage('登入失敗，請確認店員帳號與密碼。'); return; }
+    orderEl('staffPassword').value=''; await updateStaffUI(); orderMessage('登入成功，可以儲存客訂。');
+  } catch(error) { orderMessage(error.message); } finally { button.disabled=false; }
+});
+orderEl('staffLogout').addEventListener('click',async()=> {
+  if(savingOrder) return;
+  try { const {error}=await getOrderClient().auth.signOut(); if(error) throw error;
+    orderEl('todayOrders').replaceChildren(); orderEl('todayMessage').textContent='已登出，客訂資料已收起。';
+    orderEl('orderCustomer').value=''; orderEl('orderNote').value=''; orderCart=[]; pendingOrderId=null; renderOrderCart();
+    await updateStaffUI(); orderMessage('已登出。');
+  } catch(error) { orderMessage('登出失敗，請稍後再試。'); }
+});
+async function saveCustomerOrder(event) {
+  event.preventDefault(); if(savingOrder) return;
+  const customer=orderEl('orderCustomer').value.trim(), note=orderEl('orderNote').value.trim();
+  if(!customer || !orderCart.length) { orderMessage('請填寫客訂代號，並至少加入一個商品規格。'); return; }
+  if(orderCart.some(item=>!Number.isInteger(item.qty)||item.qty<1||item.qty>999)) { orderMessage('數量必須是 1 到 999 的整數。'); return; }
+  try {
+    const client=getOrderClient(); const {data,error}=await client.auth.getSession(); if(error) throw error;
+    if(!data.session) { orderMessage('請先以店員帳號登入再儲存客訂。'); orderEl('staffEmail').focus(); return; }
+    pendingOrderId=pendingOrderId || crypto.randomUUID(); savingOrder=true;
+    orderEl('saveOrder').disabled=true; orderEl('orderTest').disabled=true; orderEl('orderCustomer').disabled=true; orderEl('orderNote').disabled=true; renderOrderCart();
+    orderMessage('正在儲存客訂…');
+    const result=await client.rpc('ddu_create_customer_order',{order_id:pendingOrderId,customer_reference:customer,order_note:note,
+      requested_items:orderCart.map(item=>({variant_id:item.variant_id,qty:item.qty})),test_order:orderEl('orderTest').checked});
+    if(result.error) throw result.error;
+    orderCart=[]; pendingOrderId=null; orderEl('orderCustomer').value=''; orderEl('orderNote').value=''; orderEl('orderTest').checked=false;
+    orderMessage('客訂已儲存，狀態為「待叫貨」。'); await loadTodayOrders();
+  } catch(error) { orderMessage('尚未確認儲存成功，清單已保留。請確認店員權限及連線後再試。'); }
+  finally { savingOrder=false; orderEl('saveOrder').disabled=false; orderEl('orderTest').disabled=false; orderEl('orderCustomer').disabled=false; orderEl('orderNote').disabled=false; renderOrderCart(); }
+}
+orderEl('customerOrderForm').addEventListener('submit',saveCustomerOrder);
+orderEl('orderCustomer').addEventListener('input',()=>{if(!savingOrder) pendingOrderId=null;});
+orderEl('orderNote').addEventListener('input',()=>{if(!savingOrder) pendingOrderId=null;});
+orderEl('orderTest').addEventListener('change',()=>{if(!savingOrder) pendingOrderId=null;});
+function taipeiDayBounds(date=new Date()) {
+  const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
+  const start=new Date(day+'T00:00:00+08:00'); return [start.toISOString(),new Date(start.getTime()+86400000).toISOString()];
+}
+let loadingToday=false;
+async function loadTodayOrders() {
+  orderEl('todayPanel').hidden=false;
+  if(loadingToday) return; loadingToday=true; orderEl('todayButton').disabled=true;
+  const output=orderEl('todayOrders'); output.replaceChildren(); orderEl('todayMessage').textContent='正在讀取今日客訂…';
+  try {
+    const client=getOrderClient(),session=await client.auth.getSession(); if(session.error) throw session.error;
+    if(!session.data.session) { orderEl('todayMessage').textContent='請先登入店員帳號查看客訂。'; openOrderPanel(); return; }
+    const [start,end]=taipeiDayBounds();
+    const data=[];
+    for(let offset=0;;offset+=1000) {
+      const page=await client.from('ddu_customer_orders').select('id,created_at,customer_ref,note,items,status,is_test')
+        .gte('created_at',start).lt('created_at',end).order('created_at',{ascending:false}).order('id').range(offset,offset+999);
+      if(page.error) throw page.error; data.push(...page.data); if(page.data.length<1000) break;
+    }
+    data.slice(0,100).forEach(order=>{
+      const row=addText(output,'article','','order-line');
+      addText(row,'h3',(order.is_test?'【測試】':'')+order.customer_ref);
+      addText(row,'p',(orderStatuses[order.status]||order.status)+' · '+new Date(order.created_at).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour:'2-digit',minute:'2-digit'}));
+      (order.items||[]).forEach(item=>addText(row,'p',(item.product_name||item.product_code)+' / '+(item.variant_name||'規格')+' × '+item.qty));
+      if(order.note) addText(row,'p','備註：'+order.note);
+    });
+    orderEl('todayMessage').textContent=data.length?'今日 '+data.length+' 張客訂'+(data.length>100?'，顯示最新 100 張。':'。'):'今天尚無客訂。';
+    ['pending','ordered','shortage'].forEach(status=>{
+      orderEl('count'+status).textContent=orderStatuses[status]+' '+data.filter(order=>order.status===status&&!order.is_test).length;
+    });
+  } catch(error) { orderEl('todayMessage').textContent='無法讀取客訂，請確認店員權限及連線後重新整理。'; }
+  finally { loadingToday=false; orderEl('todayButton').disabled=false; }
+}
+orderEl('todayButton').addEventListener('click',loadTodayOrders);
+renderOrderCart(); updateStaffUI();
+
+</script>
 </body>
 </html>
