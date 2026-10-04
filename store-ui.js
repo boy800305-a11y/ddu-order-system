@@ -174,7 +174,8 @@ async function appendTodayProductStock(parent,items){
    variants.forEach(v=>{
     const row=addText(table,'tr'),entries=stock.get(v.shopline_variant_id)||{};
     if(ids.has(v.shopline_variant_id))row.style.background='#fff4d6';
-    const values=[v.color||v.variant_name||'未填寫',v.size||'—',...['D1','D2','C'].map(s=>entries[s]?String(entries[s].quantity):'未更新'),ids.has(v.shopline_variant_id)?'本次客訂':''];
+    const color=v.color&&v.color!==v.size?v.color:(v.variant_name&&v.variant_name!==v.size?v.variant_name:'—');
+    const values=[color,v.size||'—',...['D1','D2','C'].map(s=>entries[s]?String(entries[s].quantity):'未更新'),ids.has(v.shopline_variant_id)?'本次客訂':''];
     values.forEach(value=>{const cell=addText(row,'td',value);cell.style.padding='8px 4px';cell.style.borderBottom='1px solid #ddd';});
    });
    const dates=[...stock.values()].flatMap(s=>Object.values(s).map(e=>e.imported_at)).filter(Boolean).sort();
