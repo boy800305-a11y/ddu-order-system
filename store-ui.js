@@ -92,7 +92,7 @@ refreshInventoryTime();
 
 async function loadNegativeInventoryOrders(){
  const output=orderEl('negativeOrders'),message=orderEl('negativeOrderMessage'),revision=staffRevision;
- output.replaceChildren();message.textContent='正在讀取今日報表的庫存 −1 商品…';
+ output.replaceChildren();message.textContent='正在比對今日新增的庫存 −1 客訂…';
  try{
   const client=getOrderClient(),session=await client.auth.getSession();
   if(session.error)throw session.error;
@@ -102,12 +102,9 @@ async function loadNegativeInventoryOrders(){
   if(latest.error)throw latest.error;if(revision!==staffRevision)return;
   const report=latest.data[0];
   if(!report){message.textContent='今天尚未成功更新庫存報表。昨日庫存不列為今日待處理客訂。';return;}
-  const stock=[];
-  for(let offset=0;;offset+=1000){
-   const page=await client.from('ddu_store_inventory').select('variant_id,store_code,quantity').eq('import_id',report.id).eq('quantity',-1).order('variant_id').order('store_code').range(offset,offset+999);
-   if(page.error)throw page.error;if(revision!==staffRevision)return;
-   stock.push(...page.data);if(page.data.length<1000)break;
-  }
+  const changes=await client.rpc('ddu_new_negative_orders',{day_start:start,day_end:end});
+  if(changes.error)throw changes.error;if(revision!==staffRevision)return;
+  const stock=changes.data||[];
   let groups=[];
   if(stock.length){
    const [products,variants]=await Promise.all([readFullCatalog(client,'products','id,shopline_product_id,product_name'),readFullCatalog(client,'variants','id,shopline_variant_id,shopline_product_id,variant_name')]);
@@ -123,6 +120,6 @@ async function loadNegativeInventoryOrders(){
    const text=document.createElement('textarea');text.id='negativeOrderText';text.readOnly=true;text.style.width='100%';text.style.minHeight='160px';
    text.value='今日庫存 −1 待處理（未建立正式客訂）\n'+groups.map(item=>item.name+' / '+item.style+' × '+item.qty+'｜'+item.stores.map(s=>s+'：−1').join('、')).join('\n');output.appendChild(text);
   }
-  message.textContent=(groups.length?groups.length+' 種規格，共 '+groups.reduce((sum,item)=>sum+item.qty,0)+' 件待核對。':'今日報表沒有庫存剛好 −1 的商品。')+' 報表更新：'+new Date(report.completed_at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'})+'｜'+report.file_name;
+  message.textContent=(groups.length?groups.length+' 種規格，共 '+groups.reduce((sum,item)=>sum+item.qty,0)+' 件新客訂待核對。':'今日尚無新客訂；起算前已是 −1 的舊客訂已排除。')+' 報表更新：'+new Date(report.completed_at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'})+'｜'+report.file_name;
  }catch{if(revision!==staffRevision)return;output.replaceChildren();message.textContent='無法讀取庫存 −1 清單，請確認店員權限及連線後重試。';}
 }

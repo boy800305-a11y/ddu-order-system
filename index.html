@@ -266,7 +266,7 @@
     <p id="todayMessage" role="status" aria-live="polite"></p>
     <div id="todayOrders"></div>
     <h3>今日庫存 −1 待處理</h3>
-    <p>依台灣日期今日最後一次成功更新的報表，列出庫存剛好 −1 的商品。三店合併查閱、來源店分別標示；此清單沒有客人資料，尚未建立正式客訂。</p>
+    <p>從 2026/10/4 起算，以庫存更新前後比對：只有新變成 −1 的商品才列為今日新客訂。起算前的 −1 舊客訂已排除。三店共同處理、來源店分別標示；尚未填入客人資料。</p>
     <p id="negativeOrderMessage" role="status" aria-live="polite"></p>
     <div id="negativeOrders"></div>
   </section>
@@ -990,7 +990,7 @@ orderEl('discardOrderDraft').addEventListener('click',()=>{if(savingOrder||confi
 renderOrderCart(); updateStaffUI();
 </script>
 <script src="xlsx.full.min.js"></script>
-<script src="inventory.js"></script>
-<script src="store-ui.js"></script>
+<script src="inventory.js?v=20261004-baseline"></script>
+<script src="store-ui.js?v=20261004-baseline"></script>
 </body>
 </html>
