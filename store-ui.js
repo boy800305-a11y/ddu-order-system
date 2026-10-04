@@ -1,21 +1,6 @@
-// Store selection scopes every order/purchase query; stock is the last imported POS snapshot.
-let selectedStore='D1',inventoryPreview=null,inventoryImportId=null,importingInventory=false,previewingInventory=false;
+// Customer orders are processed together. POS inventory remains separate for D1, D2 and C.
+let inventoryPreview=null,inventoryImportId=null,importingInventory=false,previewingInventory=false;
 const inventoryByVariant=new Map();
-try{const saved=localStorage.getItem('ddu.store');if(['D1','D2','C'].includes(saved))selectedStore=saved;}catch{}
-document.getElementById('storeSelect').value=selectedStore;
-function currentStore(){return selectedStore;}
-function updateStoreLabel(){orderEl('storeMessage').textContent='目前店別：'+selectedStore+'；新增客訂、今日客訂、叫貨、到貨與查詢皆限此店。';}
-updateStoreLabel();
-orderEl('storeSelect').addEventListener('change',()=>{
- const next=orderEl('storeSelect').value;
- if(savingOrder||confirmingPurchase||receivingPurchase||loadingToday||loadingSuppliers||loadingPurchases||loadingFulfillment||searchingOrders||searchBusy||importingInventory||previewingInventory){orderEl('storeSelect').value=selectedStore;orderEl('storeMessage').textContent='正在處理資料，完成後再切換店別。';return;}
- if(orderCart.length||editingOrder||orderEl('orderCustomer').value.trim()||orderEl('orderNote').value.trim()){orderEl('storeSelect').value=selectedStore;orderEl('storeMessage').textContent='請先儲存或放棄未儲存的客訂，再切換店別。';return;}
- selectedStore=next;try{localStorage.setItem('ddu.store',next);}catch{}
- staffRevision++;resetOrderDraft();clearSupplierList('已切換店別，請重新產生叫貨清單。');clearPurchaseRecords('已切換店別，請重新查看。');clearFulfillment('已切換店別，請重新查看。');
- orderEl('todayOrders').replaceChildren();orderEl('todayMessage').textContent='已切換店別，請重新查看。';orderEl('searchResults').replaceChildren();orderEl('searchStatus').textContent='';inventoryByVariant.clear();
- orderEl('receiptMessage').textContent='';orderEl('fulfillmentActionMessage').textContent='';orderMessage('');
- ['pending','ordered','shortage'].forEach(s=>orderEl('count'+s).textContent=orderStatuses[s]+' 0');updateStoreLabel();
-});
 async function attachInventoryStock(variants){
  inventoryByVariant.clear();
  try{
@@ -33,10 +18,9 @@ function appendStock(parent,variant){
  const group=addText(parent,'div','','status');
  for(const store of ['D1','D2','C']){
   const entry=stock[store],tag=addText(group,'span',store+'：'+(entry?entry.quantity+' 件':'未更新'), 'tag');
-  if(store===selectedStore){tag.style.background='#111';tag.style.color='#fff';}
  }
- const entry=stock[selectedStore];
- addText(parent,'div',entry?'目前店別 '+selectedStore+'｜庫存更新：'+new Date(entry.imported_at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}):'登入並匯入報表後顯示庫存；未更新不代表 0 件。');
+ const dates=Object.values(stock).map(row=>row.imported_at).filter(Boolean);
+ addText(parent,'div',dates.length?'庫存更新：'+new Date(dates.sort().at(-1)).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}):'登入並匯入報表後顯示庫存；未更新不代表 0 件。');
 }
 async function refreshInventoryTime(){
  const output=orderEl('inventoryLastUpdate');
