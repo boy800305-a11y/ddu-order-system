@@ -84,7 +84,7 @@ orderEl('previewInventory').addEventListener('click',async()=>{
   const output=orderEl('inventoryPreview');
   addText(output,'p','可更新 '+report.matched.length+' 個規格；未對應 '+report.unmatched.length+' 列。未對應資料不寫入，原有庫存保留。');
   addText(output,'p','預設倉庫 → D1｜D → D2｜C → C。庫存總量欄位不匯入。');
-  const table=document.createElement('table');table.style.width='100%';table.style.fontSize='13px';table.style.borderCollapse='collapse';output.appendChild(table);
+  const table=document.createElement('table');table.style.width='100%';table.style.fontSize='14px';table.style.borderCollapse='collapse';table.style.tableLayout='fixed';table.style.lineHeight='1.5';output.appendChild(table);
   const head=document.createElement('tr');table.appendChild(head);['商品／規格','D1','D2','C'].forEach(label=>addText(head,'th',label));
   report.matched.slice(0,10).forEach(item=>{const row=document.createElement('tr');table.appendChild(row);[item.name+' / '+item.style,item.d1,item.d2,item.c].forEach(value=>{const cell=addText(row,'td',value);cell.style.padding='8px 3px';cell.style.borderBottom='1px solid #ddd';});});
   if(report.matched.some(r=>[r.d1,r.d2,r.c].some(q=>q<0)))addText(output,'p','報表含負庫存，會保留原報表數值，請另於 POS 核對。');
@@ -195,17 +195,23 @@ async function appendTodayProductStock(parent,items){
    const product=catalog.products.get(id);
    addText(content,'p',(product?.product_code?product.product_code+' ':'')+(product?.product_name||'商品'));
 
-   const table=addText(content,'table');table.style.width='100%';table.style.fontSize='13px';table.style.borderCollapse='collapse';
-   const heading=addText(table,'tr');['顏色','尺寸','D1','D2','C','客訂規格'].forEach(label=>{const cell=addText(heading,'th',label);cell.scope='col';cell.style.padding='8px 4px';});
+   const table=addText(content,'table');table.style.width='100%';table.style.fontSize='14px';table.style.borderCollapse='collapse';table.style.tableLayout='fixed';table.style.lineHeight='1.5';
+   const heading=addText(table,'tr');['顏色','尺寸','D1','D2','C','客訂規格'].forEach((label,column)=>{const cell=addText(heading,'th',label);cell.scope='col';styleStockCell(cell,column);cell.style.width=['20%','14%','12%','12%','12%','30%'][column];});
    variants.forEach(v=>{
     const row=addText(table,'tr'),entries=stock.get(v.shopline_variant_id)||{};
     if(ids.has(v.shopline_variant_id))row.style.background='#fff4d6';
     const color=v.color&&v.color!==v.size?v.color:(v.variant_name&&v.variant_name!==v.size?v.variant_name:'—');
     const values=[color,v.size||'—',...['D1','D2','C'].map(s=>entries[s]?String(entries[s].quantity):'未更新'),ids.has(v.shopline_variant_id)?'本次客訂':''];
-    values.forEach(value=>{const cell=addText(row,'td',value);cell.style.padding='8px 4px';cell.style.borderBottom='1px solid #ddd';});
+    values.forEach((value,column)=>{const cell=addText(row,'td',value);styleStockCell(cell,column);cell.style.borderBottom='1px solid #ddd';});
    });
    const dates=[...stock.values()].flatMap(s=>Object.values(s).map(e=>e.imported_at)).filter(Boolean).sort();
    addText(content,'p',dates.length?'庫存報表更新：'+new Date(dates.at(-1)).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}):'尚無庫存報表；未更新不代表 0 件。');
   });
  }catch{if(revision!==staffRevision)return;status.textContent='其他規格庫存讀取失敗，請重新按「查看今日客訂」。';}
+}
+
+function styleStockCell(cell,column){
+ cell.style.padding='9px 4px';cell.style.textAlign=column===0||column===5?'left':'center';
+ cell.style.verticalAlign='middle';cell.style.fontSize='14px';cell.style.lineHeight='1.5';cell.style.fontVariantNumeric='tabular-nums';
+ cell.style.overflowWrap='normal';cell.style.wordBreak='normal';
 }
