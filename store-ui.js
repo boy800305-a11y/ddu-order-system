@@ -19,7 +19,12 @@ function appendOrderProduct(parent,item,text){
   const revision=staffRevision;
   getTodayStockCatalog().then(catalog=>{if(revision!==staffRevision)return;const product=catalog.products.get(catalog.byVariant.get(item.variant_id)?.shopline_product_id);if(product)showPhoto(product);}).catch(()=>{});
  }
- addText(row,'p',text);return row;
+ const description=addText(row,'div');description.style.minWidth='0';
+ const name=addText(description,'p',text);name.style.margin='0 0 6px';
+ const supplier=String(item.supplier_code||'').trim();
+ const label=addText(description,'p','廠商代號：'+(supplier||(Object.prototype.hasOwnProperty.call(item,'supplier_code')?'未設定':'待確認')));
+ label.style.margin='0';label.style.fontWeight='600';label.style.fontSize='14px';
+ return row;
 }
 
 // Customer orders are processed together. POS inventory remains separate for D1, D2 and C.
