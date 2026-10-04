@@ -114,14 +114,15 @@
     [hidden] { display: none !important; }
     #orderPanel label { display:block; margin-top:14px; font-size:14px; }
     #orderPanel input:not([type="checkbox"]), #orderPanel textarea { width:100%; padding:12px; margin-top:8px; border:1px solid #ddd; border-radius:10px; font:inherit; font-size:16px; }
-    #orderPanel .test-label { display:flex; align-items:center; gap:8px; }
+    .test-label { display:flex; align-items:center; gap:8px; }
     .order-line { margin-top:14px; padding:12px; background:#f5f6f8; border-radius:10px; overflow-wrap:anywhere; }
+    .purchase-review { margin-top:12px; padding-top:12px; border-top:1px solid #ddd; }
     .order-line h3 { margin:0 0 8px; font-size:17px; }
     #orderTotal, #orderMessage { margin-top:12px; }
     .supplier-mode { display:block; margin-top:12px; font-size:14px; }
     #supplierPanel textarea { width:100%; margin-top:8px; padding:12px; border:1px solid #ddd; border-radius:10px; font:inherit; font-size:16px; }
     #supplierPanel label { display:block; margin-top:12px; font-size:14px; }
-    #supplierMessage { margin-top:12px; overflow-wrap:anywhere; }
+    #purchaseMessage, #supplierMessage { margin-top:12px; overflow-wrap:anywhere; }
   </style>
 </head>
 
@@ -166,7 +167,7 @@
       彙整本人所有待叫貨客訂，依廠商、規格加總；正式清單排除測試客訂。
     </p>
 
-    <label class="supplier-mode"><input type="checkbox" id="supplierTestOnly"> 僅預覽測試客訂</label>
+    <label class="supplier-mode"><input type="checkbox" id="supplierTestOnly"> 測試客訂模式（不計入正式叫貨）</label>
     <button class="secondary" id="supplierButton">
       產生叫貨清單
     </button>
@@ -227,9 +228,18 @@
 
   <section class="card" id="supplierPanel" hidden aria-label="廠商叫貨清單">
     <h2>🏭 廠商叫貨清單</h2>
-    <p>此清單供核對與複製；產生清單後，客訂仍維持「待叫貨」。</p>
+    <p>先向廠商下單，再按規格清單下方的「記錄已向廠商叫貨」。已記錄的數量會移出待叫貨清單。</p>
     <p id="supplierMessage" role="status" aria-live="polite"></p>
     <div id="supplierGroups"></div>
+  </section>
+
+  <section class="card" id="purchasePanel" aria-label="已叫貨未到貨紀錄">
+    <h2>📦 已叫貨未到貨</h2>
+    <p>查看本人已記錄的廠商叫貨批次、日期及未到貨件數。</p>
+    <label class="supplier-mode"><input type="checkbox" id="purchaseTestOnly"> 僅查看測試叫貨紀錄</label>
+    <button class="secondary" id="purchaseButton" type="button">查看已叫貨未到貨紀錄</button>
+    <p id="purchaseMessage" role="status" aria-live="polite"></p>
+    <div id="purchaseRecords"></div>
   </section>
 
   <div class="bottom">
@@ -311,7 +321,7 @@ function renderProduct(product, variants) {
     if (variant.variant_sku) addText(item, 'div', '規格編號：' + variant.variant_sku);
     const choose = addText(item, 'button', '加入客訂 · ' + (variant.variant_name || '商品規格'), 'secondary');
     choose.type = 'button';
-    choose.addEventListener('click', () => { if (!savingOrder) addOrderItem(product, variant); });
+    choose.addEventListener('click', () => { if (!savingOrder&&!confirmingPurchase) addOrderItem(product, variant); });
     list.appendChild(item);
   }
   article.appendChild(list);
@@ -443,8 +453,8 @@ orderEl('staffLoginForm').addEventListener('submit',async event=> {
   } catch(error) { orderMessage(error.message); } finally { button.disabled=false; }
 });
 orderEl('staffLogout').addEventListener('click',async()=> {
-  if(savingOrder) return;
-  staffRevision++; clearSupplierList('已登出，叫貨清單已收起。');
+  if(savingOrder||confirmingPurchase) return;
+  staffRevision++; clearSupplierList('已登出，叫貨清單已收起。'); clearPurchaseRecords();
   try { const {error}=await getOrderClient().auth.signOut(); if(error) throw error;
     orderEl('todayOrders').replaceChildren(); orderEl('todayMessage').textContent='已登出，客訂資料已收起。';
     orderEl('orderCustomer').value=''; orderEl('orderNote').value=''; orderCart=[]; pendingOrderId=null; renderOrderCart();
@@ -452,7 +462,7 @@ orderEl('staffLogout').addEventListener('click',async()=> {
   } catch(error) { orderMessage('登出失敗，請稍後再試。'); }
 });
 async function saveCustomerOrder(event) {
-  event.preventDefault(); if(savingOrder) return;
+  event.preventDefault(); if(savingOrder||confirmingPurchase) return;
   const customer=orderEl('orderCustomer').value.trim(), note=orderEl('orderNote').value.trim();
   if(!customer || !orderCart.length) { orderMessage('請填寫客訂代號，並至少加入一個商品規格。'); return; }
   if(orderCart.some(item=>!Number.isInteger(item.qty)||item.qty<1||item.qty>999)) { orderMessage('數量必須是 1 到 999 的整數。'); return; }
@@ -499,7 +509,7 @@ async function loadTodayOrders() {
       const row=addText(output,'article','','order-line');
       addText(row,'h3',(order.is_test?'【測試】':'')+order.customer_ref);
       addText(row,'p',(orderStatuses[order.status]||order.status)+' · '+new Date(order.created_at).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour:'2-digit',minute:'2-digit'}));
-      (order.items||[]).forEach(item=>addText(row,'p',(item.product_name||item.product_code)+' / '+(item.variant_name||'規格')+' × '+item.qty));
+      (order.items||[]).forEach(item=>addText(row,'p',(item.product_name||item.product_code)+' / '+(item.variant_name||'規格')+' × '+item.qty+(item.ordered_qty?'（已叫貨 '+item.ordered_qty+' 件）':'')));
       if(order.note) addText(row,'p','備註：'+order.note);
     });
     orderEl('todayMessage').textContent=data.length?'今日 '+data.length+' 張客訂'+(data.length>100?'，顯示最新 100 張。':'。'):'今天尚無客訂。';
@@ -513,20 +523,25 @@ orderEl('todayButton').addEventListener('click',loadTodayOrders);
 renderOrderCart(); updateStaffUI();
 
 // Aggregate saved item snapshots without exposing the public supplier catalog.
-let loadingSuppliers=false, staffRevision=0;
+let loadingSuppliers=false, staffRevision=0, confirmingPurchase=false;
 function groupSupplierOrders(orders, testOnly=false) {
   const groups=new Map(); let orderCount=0;
   for(const order of orders) {
     if(order.status!=='pending'||order.is_test!==testOnly) continue;
-    orderCount++;
+    let hasRemaining=false;
     for(const item of order.items||[]) {
       if(!item.variant_id||!Number.isInteger(item.qty)||item.qty<1) throw new Error('客訂規格資料不完整');
+      const ordered=item.ordered_qty??0;
+      if(!Number.isInteger(ordered)||ordered<0||ordered>item.qty) throw new Error('已叫貨數量異常');
+      const remaining=item.qty-ordered; if(!remaining) continue;
+      hasRemaining=true;
       const supplier=String(item.supplier_code||'').trim();
-      if(!groups.has(supplier)) groups.set(supplier,{supplier,items:new Map(),qty:0});
+      if(!groups.has(supplier)) groups.set(supplier,{supplier,items:new Map(),orderIds:new Set(),qty:0});
       const group=groups.get(supplier);
       if(!group.items.has(item.variant_id)) group.items.set(item.variant_id,{...item,qty:0});
-      group.items.get(item.variant_id).qty+=item.qty; group.qty+=item.qty;
+      group.items.get(item.variant_id).qty+=remaining; group.qty+=remaining; group.orderIds.add(order.id);
     }
+    if(hasRemaining) orderCount++;
   }
   const sorted=[...groups.values()].sort((a,b)=>a.supplier.localeCompare(b.supplier,'zh-TW'));
   sorted.forEach(group=>{group.items=[...group.items.values()].sort((a,b)=>String(a.product_code||'').localeCompare(String(b.product_code||''),'zh-TW',{numeric:true})||String(a.variant_name||'').localeCompare(String(b.variant_name||''),'zh-TW'));});
@@ -539,7 +554,7 @@ function clearSupplierList(message='客訂有變動，請重新產生叫貨清�
   orderEl('supplierGroups').replaceChildren(); orderEl('supplierMessage').textContent=message;
 }
 async function loadSupplierOrders() {
-  if(loadingSuppliers) return;
+  if(loadingSuppliers||confirmingPurchase) return;
   const revision=staffRevision, testOnly=orderEl('supplierTestOnly').checked;
   loadingSuppliers=true; orderEl('supplierButton').disabled=true; orderEl('supplierTestOnly').disabled=true;
   orderEl('supplierPanel').hidden=false;
@@ -568,10 +583,21 @@ async function loadSupplierOrders() {
       if(group.supplier) {
         const label=addText(row,'label','叫貨文字（可選取複製）'); label.htmlFor='supplierText'+index;
         const text=document.createElement('textarea'); text.id=label.htmlFor; text.readOnly=true; text.rows=Math.min(12,group.items.length+2);
-        text.value=(testOnly?'【測試預覽，不供正式叫貨】\n':'')+name+'\n'+group.items.map(supplierItemText).join('\n'); row.appendChild(text);
+        text.value=(testOnly?'【測試叫貨，不供正式叫貨】\n':'')+name+'\n'+group.items.map(supplierItemText).join('\n'); row.appendChild(text);
+        const review=addText(row,'button',testOnly?'記錄測試叫貨 · '+group.supplier:'記錄已向廠商叫貨 · '+group.supplier,'secondary'); review.type='button'; review.className+=' purchase-action';
+        const confirmation=addText(row,'div','','purchase-review'); confirmation.hidden=true;
+        addText(confirmation,'p',(testOnly?'這會記錄一筆測試叫貨。':'請先完成向廠商下單，再記錄已叫貨。')+' 本次：'+group.items.length+' 種規格、'+group.qty+' 件。');
+        const agreeLabel=addText(confirmation,'label','', 'test-label');
+        const agree=document.createElement('input'); agree.type='checkbox'; agreeLabel.appendChild(agree);
+        addText(agreeLabel,'span',testOnly?'確認這是測試叫貨紀錄':'我已向此廠商下單，數量與清單一致');
+        const confirm=addText(confirmation,'button','確認記錄已叫貨 · '+group.supplier,'primary'); confirm.type='button'; confirm.disabled=true; confirm.className+=' purchase-action';
+        agree.addEventListener('change',()=>{confirm.disabled=!agree.checked||confirmingPurchase;});
+        review.addEventListener('click',()=>{confirmation.hidden=!confirmation.hidden;});
+        group.batchId=crypto.randomUUID();
+        confirm.addEventListener('click',()=>{if(agree.checked) confirmSupplierBatch(group,testOnly,confirm);});
       }
     });
-    orderEl('supplierMessage').textContent=(testOnly?'【測試預覽】':'正式清單：')+(result.orderCount?result.orderCount+' 張待叫貨客訂，'+result.groups.length+' 組廠商，共 '+result.qty+' 件。':'目前沒有'+(testOnly?'測試':'正式')+'待叫貨客訂。')+' 產生時間：'+new Date().toLocaleString('zh-TW',{timeZone:'Asia/Taipei'})+'。';
+    orderEl('supplierMessage').textContent=(testOnly?'【測試模式】':'正式清單：')+(result.orderCount?result.orderCount+' 張待叫貨客訂，'+result.groups.length+' 組廠商，共 '+result.qty+' 件。':'目前沒有'+(testOnly?'測試':'正式')+'待叫貨客訂。')+' 產生時間：'+new Date().toLocaleString('zh-TW',{timeZone:'Asia/Taipei'})+'。';
     orderEl('supplierPanel').scrollIntoView({behavior:'smooth',block:'start'});
   } catch(error) {
     if(revision===staffRevision) clearSupplierList('無法產生叫貨清單，請確認店員權限、客訂資料及連線後再試。');
@@ -579,6 +605,70 @@ async function loadSupplierOrders() {
 }
 orderEl('supplierButton').addEventListener('click',loadSupplierOrders);
 orderEl('supplierTestOnly').addEventListener('change',()=>clearSupplierList('模式已變更，請按「產生叫貨清單」重新整理。'));
+
+function setPurchaseBusy(busy) {
+  confirmingPurchase=busy;
+  orderEl('supplierButton').disabled=busy; orderEl('supplierTestOnly').disabled=busy;
+  orderEl('saveOrder').disabled=busy;
+  orderEl('staffLogout').disabled=busy;
+  document.querySelectorAll('.purchase-action').forEach(button=>{button.disabled=busy||!!button.closest('.purchase-review')&&!button.closest('.purchase-review').querySelector('input').checked;});
+}
+async function confirmSupplierBatch(group,testOnly,button) {
+  if(confirmingPurchase||savingOrder) return;
+  const revision=staffRevision; setPurchaseBusy(true);
+  orderEl('supplierMessage').textContent='正在記錄已叫貨，請勿重複提交…';
+  try {
+    const client=getOrderClient(),session=await client.auth.getSession(); if(session.error) throw session.error;
+    if(!session.data.session) throw new Error('Login required');
+    const result=await client.rpc('ddu_confirm_supplier_batch',{batch_id:group.batchId,supplier:group.supplier,
+      source_orders:[...group.orderIds],expected_items:group.items.map(item=>({variant_id:item.variant_id,qty:item.qty})),test_batch:testOnly});
+    if(result.error) throw result.error;
+    if(revision!==staffRevision) return;
+    clearSupplierList((testOnly?'【測試】':'')+'已記錄廠商 '+group.supplier+' 叫貨 '+group.qty+' 件。請重新產生清單查看剩餘待叫貨商品。');
+    orderEl('purchaseTestOnly').checked=testOnly;
+    await loadPurchaseRecords(); await loadTodayOrders();
+  } catch(error) {
+    if(revision!==staffRevision) return;
+    if(error.code==='P0001') clearSupplierList('客訂清單已變動，請重新產生清單核對後再記錄。');
+    else orderEl('supplierMessage').textContent='尚未確認記錄成功。請先查看已叫貨紀錄，或用同一確認按鈕重試。';
+  } finally {setPurchaseBusy(false);}
+}
+let loadingPurchases=false;
+function clearPurchaseRecords(message='已登出，叫貨紀錄已收起。') {
+  orderEl('purchaseRecords').replaceChildren(); orderEl('purchaseMessage').textContent=message;
+}
+async function loadPurchaseRecords() {
+  if(loadingPurchases) return;
+  const revision=staffRevision,testOnly=orderEl('purchaseTestOnly').checked;
+  loadingPurchases=true; orderEl('purchaseButton').disabled=true; orderEl('purchaseTestOnly').disabled=true;
+  orderEl('purchasePanel').hidden=false; clearPurchaseRecords('正在讀取已叫貨未到貨紀錄…');
+  try {
+    const client=getOrderClient(),session=await client.auth.getSession(); if(session.error) throw session.error;
+    if(!session.data.session) {clearPurchaseRecords('請先登入店員帳號。'); openOrderPanel(); return;}
+    const records=[];
+    for(let offset=0;;offset+=1000) {
+      const page=await client.from('ddu_purchase_batches').select('id,ordered_at,supplier_code,items,is_test,status')
+        .in('status',['ordered','partial']).eq('is_test',testOnly).order('ordered_at',{ascending:false}).order('id').range(offset,offset+999);
+      if(revision!==staffRevision) return;
+      if(page.error) throw page.error; records.push(...page.data); if(page.data.length<1000) break;
+    }
+    let total=0; const output=orderEl('purchaseRecords');
+    records.forEach(batch=>{
+      const row=addText(output,'article','','order-line');
+      addText(row,'h3',(batch.is_test?'【測試】':'')+'廠商 '+batch.supplier_code);
+      addText(row,'p','叫貨日期：'+new Date(batch.ordered_at).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}));
+      addText(row,'p','叫貨編號：'+batch.id);
+      (batch.items||[]).forEach(item=>{
+        const pending=Math.max(0,item.qty-(item.received_qty||0)); total+=pending;
+        addText(row,'p',supplierItemText(item)+' ｜ 已到貨 '+(item.received_qty||0)+' 件／未到貨 '+pending+' 件');
+      });
+    });
+    orderEl('purchaseMessage').textContent=(testOnly?'【測試紀錄】':'正式紀錄：')+records.length+' 批叫貨，共 '+total+' 件未到貨。';
+  } catch(error) {if(revision===staffRevision) clearPurchaseRecords('無法讀取叫貨紀錄，請確認權限及連線後再試。');}
+  finally {loadingPurchases=false; orderEl('purchaseButton').disabled=false; orderEl('purchaseTestOnly').disabled=false;}
+}
+orderEl('purchaseButton').addEventListener('click',loadPurchaseRecords);
+orderEl('purchaseTestOnly').addEventListener('change',()=>clearPurchaseRecords('模式已變更，請重新查看紀錄。'));
 
 </script>
 </body>
